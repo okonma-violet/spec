@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/csv"
-	"fmt"
 	"os"
 	"regexp"
 	"strconv"
@@ -39,6 +38,8 @@ type product struct {
 	articul     string
 }
 
+var articulnormrx = regexp.MustCompile("[^а-яa-z0-9]")
+
 func main() {
 	println("CONVERT")
 	convert("test/prices/")
@@ -67,41 +68,104 @@ func main() {
 	println("LOAD PRODUCTS DONE")
 
 	println("CATEGORIZING")
-	r.categorize()
+	r.categorizeAll()
 	println("CATEGORIZING DONE")
 
-	fmt.Println("\n-----------------\n")
-	var i int
-	fmt.Println("\nbrands by id")
-	for j, k := range r.brandsById {
-		if i < 10 {
-			fmt.Println("++ id", j, k)
-			i++
-		} else {
-			break
-		}
-	}
-	fmt.Println("\nbrands by norm")
-	for j, k := range r.brandsByNorm {
-		if i > 0 {
-			fmt.Println("-- norm", j, k)
-			i--
-		} else {
-			break
-		}
-	}
-	fmt.Println("\ncategories by id")
-	for j, k := range r.categiriesById {
-		fmt.Println("$$ id", j, k)
-	}
-	fmt.Println("\nproducts by art")
-	for j, k := range r.productsByArticul {
-		fmt.Println("## art", j, k)
-	}
+	println("UPLOAD TO CSV")
+	r.uploadToCSV("test/res/")
+	println("UPLOAD TO CSV DONE")
+
+	// fmt.Println("\n-----------------\n")
+	// var i int
+	// fmt.Println("\nbrands by id")
+	// for j, k := range r.brandsById {
+	// 	if i < 10 {
+	// 		fmt.Println("++ id", j, k)
+	// 		i++
+	// 	} else {
+	// 		break
+	// 	}
+	// }
+	// fmt.Println("\nbrands by norm")
+	// for j, k := range r.brandsByNorm {
+	// 	if i > 0 {
+	// 		fmt.Println("-- norm", j, k)
+	// 		i--
+	// 	} else {
+	// 		break
+	// 	}
+	// }
+	// fmt.Println("\ncategories by id")
+	// for j, k := range r.categiriesById {
+	// 	fmt.Println("$$ id", j, k)
+	// }
+	// fmt.Println("\nproducts by art")
+	// for j, k := range r.productsByArticul {
+	// 	fmt.Println("## art", j, k)
+	// }
 }
 
-func uploadProductsToCSV() {
+func (r *repo) uploadToCSV(path string) {
+	f, err := os.OpenFile(path+"/products.csv", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+	if err != nil {
+		panic(err)
+	}
+	wr := csv.NewWriter(f)
+	prds := make([][]string, len(r.productsByArticul)+1)
+	prds[0] = []string{"id", "brand_id", "category_id", "name", "articul"}
+	for _, prd := range r.productsByArticul {
+		prds[prd.id] = []string{strconv.Itoa(prd.id), strconv.Itoa(prd.brand_id), strconv.Itoa(prd.category_id), prd.name, prd.articul}
+	}
+	err = wr.WriteAll(prds)
+	if err != nil {
+		panic(err)
+	}
+	f.Close()
 
+	f, err = os.OpenFile(path+"/category.csv", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+	if err != nil {
+		panic(err)
+	}
+	wr = csv.NewWriter(f)
+	cats := make([][]string, len(r.categiriesById)+1)
+	cats[0] = []string{"id", "name", "phrases"}
+	for _, cat := range r.categiriesById {
+		cats[cat.id] = []string{strconv.Itoa(cat.id), cat.name, strings.Join(cat.phrases, ", ")}
+	}
+	err = wr.WriteAll(cats)
+	if err != nil {
+		panic(err)
+	}
+	f.Close()
+
+	f, err = os.OpenFile(path+"/brands.csv", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+	if err != nil {
+		panic(err)
+	}
+	wr = csv.NewWriter(f)
+	brds := make([][]string, len(r.brandsById)+1)
+	brds[0] = []string{"id", "name", "norm"}
+	for _, brd := range r.brandsById {
+		brds[brd.id] = []string{strconv.Itoa(brd.id), brd.name, strings.Join(brd.norm, ", ")}
+	}
+	err = wr.WriteAll(brds)
+	if err != nil {
+		panic(err)
+	}
+	f.Close()
+}
+
+// ONLY " DELIMITERS AND ONLY , SEPARATORS
+func readCSV(path string) ([][]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	data, err := csv.NewReader(f).ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func convert(path string) {
@@ -134,224 +198,35 @@ func movefiles(currpath string, newpath string, files_ext string) {
 	}
 }
 
-func (r *repo) loadbrands(filepath string) {
-	rows, err := readCSV(filepath)
-	if err != nil {
-		panic(err)
-	}
-	r.brandsByNorm = make(map[string]*brand)
-	r.brandsById = make(map[int]*brand)
-	for _, fields := range rows {
-		if len(fields) < 3 {
-			panic("less than 3 num of fields")
-		}
-		if len(fields[1]) == 0 {
-			panic("empty brand name")
-		}
-		id, err := strconv.Atoi(fields[0])
-		if err != nil {
-			panic(err)
-		}
-		norms := strings.Split(fields[2], ",")
-		for i := 0; i < len(norms); i++ {
-			norms[i] = normstring(norms[i])
-			if len(norms[i]) == 0 {
-				norms = norms[:i+copy(norms[i:], norms[i+1:])]
-			}
-		}
-		if len(norms) == 0 {
-			norms = append(norms, normstring(fields[1]))
-		}
-		for i := 0; i < len(norms); i++ {
-			if brnd, ok := r.brandsByNorm[norms[i]]; ok {
-				brnd.norm = append(brnd.norm, norms[i])
-			} else {
-				r.brandsByNorm[norms[i]] = &brand{
-					id:   id,
-					name: fields[1],
-					norm: []string{norms[i]},
-				}
-			}
-			if brnd, ok := r.brandsById[id]; ok {
-				brnd.norm = append(brnd.norm, norms[i])
-			} else {
-				r.brandsById[id] = &brand{
-					id:   id,
-					name: fields[1],
-					norm: []string{norms[i]},
-				}
-			}
-		}
-	}
-}
-
-func (r *repo) loadcategories(filepath string) {
-	rows, err := readCSV(filepath)
-	if err != nil {
-		panic(err)
-	}
-	r.categiriesById = make(map[int]*category)
-	for _, fields := range rows {
-		if len(fields) < 2 {
-			panic("less than 2 num of fields")
-		}
-		if len(fields[1]) == 0 {
-			panic("empty category name")
-		}
-		id, err := strconv.Atoi(fields[0])
-		if err != nil {
-			panic(err)
-		}
-		phrases := strings.Split(fields[1], " ")
-		for i := 0; i < len(phrases); i++ {
-			phrases[i] = unplural(strings.ToLower(phrases[i]))
-			if len(phrases) == 0 {
-				continue
-			}
-		}
-		if len(phrases) == 0 {
-			panic("no phrases founded")
-		}
-		if _, ok := r.categiriesById[id]; ok {
-			panic("id doubled")
-		} else {
-			r.categiriesById[id] = &category{
-				id:      id,
-				name:    fields[1],
-				phrases: phrases,
-			}
-		}
-
-	}
-}
-
-func (r *repo) loadproducts(path string) {
-	files, err := os.ReadDir(path)
-	if err != nil {
-		panic(err)
-	}
-	r.productsByArticul = make(map[string]*product)
-	inds := make([]int, 0, 3)
-	rxs := []*regexp.Regexp{regexp.MustCompile(`производитель|бренд`), regexp.MustCompile(`артикул`), regexp.MustCompile(`наименование|название|имя`)}
-	curind := 1
-	var brandid int
-	for _, f := range files {
-		if f.IsDir() || (!strings.HasSuffix(f.Name(), ".csv")) {
-			continue
-		}
-		rows, err := readCSV(path + "/" + f.Name())
-		if err != nil {
-			panic(err)
-		}
-		if len(rows) == 0 {
-			panic("empty file " + f.Name())
-		}
-		for i := 0; i < len(rxs); i++ {
-			for k := 0; k < len(rows[0]); k++ {
-				if rxs[i].MatchString(strings.ToLower(rows[0][k])) {
-					inds = append(inds, i)
-					break
-				}
-			}
-		}
-		if len(inds) != 3 {
-			panic("not found one of regs")
-		}
-	loop:
-		for i := 1; i < len(rows); i++ {
-			brand_normname := strings.ToLower(rows[i][inds[0]])
-			art := rows[i][inds[1]]
-			name := rows[i][inds[2]]
-
-			if brand_normname == "ngk" {
-				if ngkarts, ok := r.ngkArticules[art]; ok {
-					for k := 0; k < len(ngkarts); k++ {
-						if _, ok := r.productsByArticul[ngkarts[k]]; ok {
-							println("founded ngk already added product by second articul")
-							continue loop
-						}
-					}
-				}
-			}
-			if b, ok := r.brandsByNorm[brand_normname]; ok {
-				brandid = b.id
-			} else {
-				println("brand not found by norm " + brand_normname)
-				continue loop
-			}
-
-			if _, ok := r.productsByArticul[art]; ok {
-				println("founded already added articul")
-				continue loop
-			} else {
-				r.productsByArticul[art] = &product{
-					id:       curind,
-					brand_id: brandid,
-					name:     name,
-					articul:  art,
-				}
-				curind++
-			}
-
-		}
-
-		inds = inds[:0]
-	}
-}
-
-func (r *repo) categorize() {
+func (r *repo) categorize(prod *product) {
 	var c, max_subm, max_subm_id int
+	for cat_id, cat := range r.categiriesById {
+		if c = countMaxMatchLength(prod.name, cat.phrases); c > max_subm {
+			max_subm = c
+			max_subm_id = cat_id
+		}
+	}
+	if max_subm_id > 0 {
+		prod.category_id = max_subm_id
+		max_subm_id, max_subm = 0, 0
+	} else {
+		println("did not found any category for product "+prod.name, ", added to \"UNKNOWN CATEGORY\" ")
+		prod.category_id = 1
+	}
+}
+
+// rewrites all previous categorizing
+func (r *repo) categorizeAllHard() {
 	for _, prod := range r.productsByArticul {
-		for cat_id, cat := range r.categiriesById {
-			if c = countMaxMatchLength(prod.name, cat.phrases); c > max_subm {
-				max_subm = c
-				max_subm_id = cat_id
-			}
-		}
-		if max_subm_id > 0 {
-			prod.category_id = max_subm_id
-			max_subm_id, max_subm = 0, 0
-		} else {
-			println("did not found any category for product " + prod.name)
-		}
+		r.categorize(prod)
 	}
 }
 
-// ONLY " DELIMITERS AND ONLY , SEPARATORS
-func readCSV(path string) ([][]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	data, err := csv.NewReader(f).ReadAll()
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func (r *repo) loadNGKarticules(filepath string) {
-	filedata, err := os.ReadFile(filepath)
-	if err != nil {
-		panic(err)
-	}
-	rx := regexp.MustCompile(`[0-9A-Za-z-]+`)
-	r.ngkArticules = make(map[string][]string)
-	rows := strings.Split(string(filedata), "\n")
-	for i := 0; i < len(rows); i++ {
-		if arts := rx.FindAllString(rows[i], -1); len(arts) < 2 {
-			continue
-		} else {
-			//if _, ok := r.ngkArticules[arts[0]]; ok {
-			r.ngkArticules[arts[0]] = append(r.ngkArticules[arts[0]], arts[1])
-			//} else {
-			//	r.ngkArticules[arts[0]] = []string{arts[1]}
-			//}
-			//if _, ok := r.ngkArticules[arts[1]]; ok {
-			r.ngkArticules[arts[1]] = append(r.ngkArticules[arts[1]], arts[0])
-			//} else {
-			//	r.ngkArticules[arts[1]] = []string{arts[0]}
-			//}
+// only categorizes products with unknown category (if founds one) and uncategorized products
+func (r *repo) categorizeAll() {
+	for _, prod := range r.productsByArticul {
+		if prod.category_id > 1 {
+			r.categorize(prod)
 		}
 	}
 }
@@ -417,8 +292,6 @@ single:
 	}
 	return str
 }
-
-var articulnormrx = regexp.MustCompile("[^а-яa-z0-9]")
 
 func normstring(s string) string {
 	return articulnormrx.ReplaceAllString(strings.ToLower(s), "")
