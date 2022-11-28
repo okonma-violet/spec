@@ -7,13 +7,14 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"project/logs/encode"
-	"project/logs/logger"
+
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/okonma-violet/confdecoder"
+	"github.com/okonma-violet/project/logs/encode"
+	"github.com/okonma-violet/project/logs/logger"
 )
 
 type config struct {
