@@ -1,0 +1,8 @@
+RawCsvPath ../docs/rawcsv/
+CsvPath ../docs/csv/
+TimerSeconds 180
+
+# delim(rune), brand col, articul col, name col, partnum col, price col, quantity col
+OutFormat 59 0 1 2 3 4 5
+
+Forumauto Forum-Auto post@mx.forum-auto.ru price1.csv , 1 3 0 1 [2,3] -1 4 5
