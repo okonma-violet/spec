@@ -1,0 +1,3 @@
+ZipPath ../docs/zip/
+CsvPath ../docs/rawcsv/
+TimerSeconds 180
