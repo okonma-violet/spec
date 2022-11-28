@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/csv"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -231,10 +230,9 @@ func (c *config) do_job(l logger.Logger, cancel context.CancelFunc, sups *suppli
 // нет проверки соответствия форматов длинам слайсов
 // does NOT lock dir
 func (c *config) formatCSV(filename string, frmt *format) error {
-	fmt.Println("formatting", frmt)
 	time.Sleep(time.Second)
-	if frmt == nil {
-		return errors.New("nil given format")
+	if frmt == nil || frmt.Name == "" || frmt.Outfilename == "" {
+		return errors.New("nil or empty given format")
 	}
 	if filename == "" {
 		return errors.New("empty given filename")
