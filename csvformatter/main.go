@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/okonma-violet/confdecoder"
-	"github.com/okonma-violet/project/logs/encode"
-	"github.com/okonma-violet/project/logs/logger"
+	"github.com/okonma-violet/spec/logs/encode"
+	"github.com/okonma-violet/spec/logs/logger"
 )
 
 type config struct {
