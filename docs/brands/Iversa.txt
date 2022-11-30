@@ -1,0 +1,13 @@
+Name 
+Email 
+Filename 
+Delimeter 
+Quotes 
+FirstRow 
+BrandCol 
+ArticulCol 
+NameCol 
+PartnumCol 
+PriceCol 
+QuantityCol 
+RestCol 

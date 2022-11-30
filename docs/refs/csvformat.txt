@@ -1,0 +1,10 @@
+Delimeter ;
+Quotes 1
+FirstRow 1
+BrandCol 0
+ArticulCol 1
+NameCol 2
+PartnumCol 3
+PriceCol 4
+QuantityCol 6
+RestCol 5

@@ -1,4 +1,5 @@
-CsvPath ../docs/csv/
+ProductsCsvPath ../docs/csv/
+BrandsFilePath ../docs/refs/brands.csv
+SuppliersConfsPath ../docs/brands/
 
-# delim(rune), brand col, articul col, name col, partnum col, price col, quantity col
-OutFormat 59 0 1 2 3 4 5
+SuppliersCsvFormatFilePath ../docs/refs/csvformat.txt
