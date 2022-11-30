@@ -1,0 +1,4 @@
+CsvPath ../docs/csv/
+
+# delim(rune), brand col, articul col, name col, partnum col, price col, quantity col
+OutFormat 59 0 1 2 3 4 5
