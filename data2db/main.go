@@ -113,7 +113,7 @@ func main() {
 					break
 				}
 				if errors.Is(err, csv.ErrFieldCount) {
-					continue
+					break
 				}
 			}
 			// CREATING ARTICUL
