@@ -91,6 +91,7 @@ func main() {
 			panic(err)
 		}
 		defer file.Close()
+
 		r := csv.NewReader(file)
 		r.Comma = rune(conf.SuppliersCsvFormat.Delimeter[0])
 		r.LazyQuotes = true
@@ -111,10 +112,9 @@ func main() {
 				if errors.Is(err, io.EOF) {
 					break
 				}
-				if len(row) == 0 {
+				if errors.Is(err, csv.ErrFieldCount) {
 					continue
 				}
-				panic(err)
 			}
 			// CREATING ARTICUL
 			normart := normstring(row[conf.SuppliersCsvFormat.ArticulCol])
