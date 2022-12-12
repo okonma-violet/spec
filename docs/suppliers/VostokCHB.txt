@@ -1,0 +1,13 @@
+Name Восток ЧБ
+Email noreply@v-auto.ru
+Filename price14.csv
+Delimiter ,
+Quotes 1
+FirstRow 2
+BrandCol 4
+ArticulCol 0
+NameCol 1
+PartnumCol -1
+PriceCol 5
+QuantityCol 3
+RestCol 2

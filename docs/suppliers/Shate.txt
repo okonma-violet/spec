@@ -1,0 +1,13 @@
+Name Shate
+Email prices_export@shate-m.com
+Filename price8.csv
+Delimiter ;
+Quotes 1
+FirstRow 1
+BrandCol 0
+ArticulCol 1
+NameCol 2
+PartnumCol -1
+PriceCol 6
+QuantityCol 4
+RestCol 3

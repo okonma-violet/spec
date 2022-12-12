@@ -1,4 +1,5 @@
-RawCsvPath ../docs/rawcsv/
-CsvPath ../docs/csv/
+RawCsvPath ../docs/test/rawcsv/
+CsvPath ../docs/test/csv/
 TimerSeconds 180
 SuppliersCsvFormatFilePath ../docs/refs/csvformat.txt
+SuppliersConfsPath ../docs/suppliers/

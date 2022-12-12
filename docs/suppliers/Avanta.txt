@@ -1,0 +1,13 @@
+Name Avanta
+Email optauto@avanta74.ru
+Filename price13.csv
+Delimiter ,
+Quotes 1
+FirstRow 1
+BrandCol 2
+ArticulCol 0
+NameCol 1
+PartnumCol -1
+PriceCol 3
+QuantityCol -1
+RestCol 4

@@ -1,5 +1,6 @@
-ProductsCsvPath ../docs/csv/
+ProductsCsvPath ../docs/test/csv/
 BrandsFilePath ../docs/refs/brands.csv
-SuppliersConfsPath ../docs/brands/
-
+SuppliersConfsPath ../docs/suppliers/
+KeywordsFilePath ./products_keywords.csv
 SuppliersCsvFormatFilePath ../docs/refs/csvformat.txt
+CategoriesFilePath ../docs/refs/categories.csv

@@ -1,0 +1,13 @@
+Name Иверса
+Email natalia.sh@ivers.ru
+Filename price2.csv
+Delimiter ,
+Quotes 1
+FirstRow 1
+BrandCol 0
+ArticulCol 1
+NameCol 2
+PartnumCol 5
+PriceCol 7
+QuantityCol 8
+RestCol 6

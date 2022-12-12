@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"regexp"
 
 	"strings"
 	"syscall"
@@ -15,12 +17,15 @@ import (
 	"github.com/okonma-violet/confdecoder"
 	"github.com/okonma-violet/spec/logs/encode"
 	"github.com/okonma-violet/spec/logs/logger"
+	"golang.org/x/text/encoding/charmap"
 )
 
 type config struct {
-	RawCsvPath                 string
-	CsvPath                    string
-	TimerSeconds               int
+	RawCsvPath   string
+	CsvPath      string
+	TimerSeconds int
+
+	SuppliersConfsPath         string
 	SuppliersCsvFormatFilePath string
 	SuppliersCsvFormat         *format
 }
@@ -50,25 +55,25 @@ func main() {
 	if conf.CsvPath == "" {
 		panic("no CsvPath specified in config.txt")
 	}
+	if conf.SuppliersConfsPath == "" {
+		panic("no CsvPath specified in config.txt")
+	}
 	if conf.TimerSeconds == 0 {
 		panic("no TimerSeconds specified in config.txt or is zero")
 	}
+	if conf.SuppliersCsvFormatFilePath == "" {
+		panic("no SuppliersCsvFormatFilePath specified  in config.txt")
+	}
+
 	err = confdecoder.DecodeFile(conf.SuppliersCsvFormatFilePath, conf.SuppliersCsvFormat)
 	if err != nil {
 		panic("read SuppliersCsvFormatFile file err: " + err.Error())
 	}
 	if conf.SuppliersCsvFormat.Delimeter == "" {
-		panic("bad SuppliersCsvFormat")
-	}
-	if conf.SuppliersCsvFormatFilePath == "" {
-		panic("no SuppliersCsvFormatFilePath specified or num of values dont match (must be 7 values)")
+		panic("bad readed SuppliersCsvFormat")
 	}
 
-	rep, err := OpenRepository("postgres://ozon:q13471347@localhost:5432/ozondb")
-	if err != nil {
-		panic(err)
-	}
-	defer rep.db.Close(context.Background())
+	conf.SuppliersConfsPath += "/"
 
 	conf.RawCsvPath += "/"
 	conf.CsvPath += "/"
@@ -79,34 +84,36 @@ func main() {
 	l := flsh.NewLogsContainer("csvformatter")
 
 	go func() {
-		ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
+		//ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
 		l.Debug("Job", "started")
-		sups, err := rep.GetSuppliersByNames()
+		sups, err := LoadSuppliers(conf.SuppliersConfsPath)
 		if err != nil {
-			l.Error("GetSuppliersByNames", err)
-			l.Error("Job", errors.New("cant do without suppliers"))
-		} else {
-			conf.do_job(l, cancel, sups)
-			l.Debug("Job", "done, sleeping")
+			l.Error("LoadSuppliers", err)
+			cancel()
+			return
 		}
-		for {
-			select {
-			case <-ctx.Done():
-				l.Info("Routine", "context done, exiting loop")
-				return
-			case <-ticker.C:
-				l.Debug("Job", "started")
-				sups, err = rep.GetSuppliersByNames()
-				if err != nil {
-					l.Error("GetSuppliersByNames", err)
-					l.Error("Job", errors.New("cant do without suppliers"))
-				} else {
-					conf.do_job(l, cancel, sups)
-					l.Debug("Job", "done, sleeping")
-				}
-			}
 
-		}
+		conf.do_job(l, cancel, sups)
+
+		cancel()
+		// for {
+		// 	select {
+		// 	case <-ctx.Done():
+		// 		l.Info("Routine", "context done, exiting loop")
+		// 		return
+		// 	case <-ticker.C:
+		// 		l.Debug("Job", "started")
+		// 		sups, err = rep.GetSuppliersByNames()
+		// 		if err != nil {
+		// 			l.Error("GetSuppliersByNames", err)
+		// 			l.Error("Job", errors.New("cant do without suppliers"))
+		// 		} else {
+		// 			conf.do_job(l, cancel, sups)
+		// 			l.Debug("Job", "done, sleeping")
+		// 		}
+		// 	}
+
+		// }
 	}()
 
 	<-ctx.Done()
@@ -127,118 +134,118 @@ func (c *config) do_job(l logger.Logger, cancel context.CancelFunc, sups map[str
 	for _, f := range files {
 		var sup supplier
 		var ername string
-		var ok bool
+		var ok, encode_needed bool
 		fname_lowered := strings.ToLower(f.Name())
 		if f.IsDir() || !strings.HasSuffix(fname_lowered, ".csv") {
 			l.Warning("Format/ReadDir", "noncsv file founded "+f.Name())
 			continue
 		}
 		if strings.HasPrefix(fname_lowered, "price4autodocplus_ekat") {
-			// if err := encode(p); err != nil {  // TODO: ???
-			// 	log.Panicln(err)
-			// }
-			// err = os.Rename(p, "price10.csv")
-			if sup, ok = sups["Партком"]; !ok {
-				ername = "Партком"
+			ername, encode_needed = "Партком", true
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-
-			goto found
+			goto notfound
+		}
+		if strings.HasPrefix(fname_lowered, "price_ekb2") {
+			ername = "Иверса"
+			if sup, ok = sups[ername]; ok {
+				goto found
+			}
+			goto notfound
 		}
 		if strings.HasPrefix(fname_lowered, "export_ekaterinburg") {
-			// if err := encode(p); err != nil {  // TODO: ???
-			// 	log.Panicln(err)
-			// }
-			// err = os.Rename(p, "price8.csv")
-			if sup, ok = sups["Shate"]; !ok {
-				ername = "Shate"
+			ername, encode_needed = "Shate", true
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-			goto found
+			goto notfound
 		}
 		if strings.HasPrefix(fname_lowered, "berg_") {
-			// err = os.Rename(p, "price4.csv")
-			if sup, ok = sups["БЕРГ"]; !ok {
-				ername = "БЕРГ"
+			ername = "БЕРГ"
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-			goto found
+			goto notfound
 		}
 		if strings.HasPrefix(fname_lowered, "прайс лист для клиентов") {
-			// err = os.Rename(p, "price15.csv")
-			// if err = c.formatCSV(f.Name(), sups.); err != nil {
-			// 	l.Error("Format/formatcsv", err)
-			// }
-			l.Error("Format", errors.New("i dunno what supplier's csv it is: "+f.Name()))
-			goto found
-		} else if strings.HasPrefix(fname_lowered, "прайс") {
-			// err = os.Rename(p, "price6.csv")
-			if sup, ok = sups["Тунгусов"]; !ok {
-				ername = "Тунгусов"
+			ername = "Avanta"
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-			goto found
+			goto notfound
+		} else if strings.HasPrefix(fname_lowered, "прайс") {
+			ername = "Тунгусов"
+			if sup, ok = sups[ername]; ok {
+				goto found
+			}
+			goto notfound
 		}
 		if strings.HasPrefix(fname_lowered, "forum_") {
-			// err = os.Rename(p, "price9.csv")
-			if sup, ok = sups["Forum-Auto"]; !ok {
-				ername = "Forum-Auto"
+			ername = "Forum-Auto"
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-			goto found
+			goto notfound
 		}
 		if strings.HasPrefix(fname_lowered, "price_for_") {
-			// err = os.Rename(p, "price13.csv")
-			if sup, ok = sups["Avanta"]; !ok {
-				ername = "Avanta"
+			ername = "Avanta"
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-			goto found
+			goto notfound
 		}
 		if strings.HasPrefix(fname_lowered, "price_list") {
-			// err = os.Rename(p, "price.csv")
-			if sup, ok = sups["Планета"]; !ok {
-				ername = "Планета"
+			ername = "Планета"
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-			goto found
+			goto notfound
 		}
 		if strings.HasPrefix(fname_lowered, "8456") {
-			// err = os.Rename(p, "price11.csv")
-			if sup, ok = sups["Росско"]; !ok {
-				ername = "Росско"
+			ername = "Росско"
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-			goto found
+			goto notfound
 		}
 		if strings.HasPrefix(fname_lowered, "автодок.") {
-			// err = os.Rename(p, "price3.csv")
-			if sup, ok = sups["Юником"]; !ok {
-				ername = "Юником"
+			ername = "Юником"
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-			goto found
+			goto notfound
 		}
 		if strings.HasPrefix(fname_lowered, "обществосограниченнойответственностью") {
 			if strings.HasSuffix(fname_lowered, "чб.csv") {
-				// err = os.Rename(p, "price14.csv")
-				if sup, ok = sups["Восток ЧБ"]; !ok {
-					ername = "Восток ЧБ"
+				ername = "Восток ЧБ"
+				if sup, ok = sups[ername]; ok {
+					goto found
 				}
-				goto found
+				goto notfound
 			} else {
-				// err = os.Rename(p, "price5.csv")
-				if sup, ok = sups["Восход"]; !ok {
-					ername = "Восход"
+				ername = "Восход"
+				if sup, ok = sups[ername]; ok {
+					goto found
 				}
-				goto found
+				goto notfound
 			}
 		}
 		if strings.HasPrefix(fname_lowered, "pricetiss") {
-			// err = os.Rename(p, "price7.csv")
-			if sup, ok = sups["Торрекс"]; !ok {
-				ername = "Торрекс"
+			ername = "Торекс"
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-			goto found
+			goto notfound
 		}
-		if strings.HasPrefix(f.Name(), "╨Х╨║╨▒") {
-			// err = os.Rename(p, "price12.csv")
-			if sup, ok = sups["Армтек"]; !ok {
-				ername = "Армтек"
+		if strings.HasPrefix(f.Name(), "╨Я╤А╨") {
+			ername = "Армтек"
+			if sup, ok = sups[ername]; ok {
+				goto found
 			}
-			goto found
+			goto notfound
 		}
+	notfound:
 		if ername != "" {
 			l.Error("Format", errors.New("cant find supplier with name: "+ername))
 			continue
@@ -246,8 +253,8 @@ func (c *config) do_job(l logger.Logger, cancel context.CancelFunc, sups map[str
 		l.Error("Format", errors.New("unknown rawcsv filename: "+f.Name()))
 		continue
 	found:
-		if err = c.formatCSV(f.Name(), sup); err != nil {
-			l.Error("Format/formatCSV", err)
+		if err = c.formatCSV(f.Name(), sup, encode_needed); err != nil {
+			l.Error("Format/formatCSV", errors.New("file: "+f.Name()+", err: "+err.Error()))
 			continue
 		}
 		l.Debug("Format", "csv formatted: "+f.Name()+" to: "+sup.Filename)
@@ -263,7 +270,7 @@ func (c *config) do_job(l logger.Logger, cancel context.CancelFunc, sups map[str
 
 // нет проверки соответствия форматов длинам слайсов
 // does NOT lock dir
-func (c *config) formatCSV(filename string, sup supplier) error {
+func (c *config) formatCSV(filename string, sup supplier, encode_needed bool) error {
 	if sup.Filename == "" {
 		return errors.New("nil or empty given format")
 	}
@@ -281,12 +288,16 @@ func (c *config) formatCSV(filename string, sup supplier) error {
 	}
 	defer cleanfile.Close()
 
-	r := csv.NewReader(rawfile)
-	r.Comma = rune(sup.Delimiter[0])
+	var def_r io.Reader = rawfile
+	if encode_needed {
+		def_r = charmap.Windows1251.NewDecoder().Reader(def_r)
+	}
+	r := csv.NewReader(def_r)
+	r.Comma = []rune(sup.Delimiter)[0]
 	r.LazyQuotes = sup.Quotes == 1
 
 	w := csv.NewWriter(cleanfile)
-	w.Comma = rune(c.SuppliersCsvFormat.Delimeter[0])
+	w.Comma = []rune(c.SuppliersCsvFormat.Delimeter)[0]
 	w.UseCRLF = c.SuppliersCsvFormat.Quotes == 1
 	buf := make([]string, 8)
 	buf[c.SuppliersCsvFormat.BrandCol], buf[c.SuppliersCsvFormat.ArticulCol], buf[c.SuppliersCsvFormat.NameCol], buf[c.SuppliersCsvFormat.PartnumCol], buf[c.SuppliersCsvFormat.PriceCol], buf[c.SuppliersCsvFormat.QuantityCol], buf[c.SuppliersCsvFormat.RestCol] = "BRAND", "ARTICUL", "NAME", "PARTNUM", "PRICE", "QUANTITY", "REST"
@@ -320,13 +331,19 @@ func (c *config) formatCSV(filename string, sup supplier) error {
 				name += " " + strings.TrimSpace(readed[sup.NameCol[i]])
 			}
 		}
+		var quantity string
+		if sup.QuantityCol >= 0 {
+			quantity = readed[sup.QuantityCol]
+		} else {
+			quantity = "0"
+		}
 		buf[c.SuppliersCsvFormat.BrandCol],
 			buf[c.SuppliersCsvFormat.ArticulCol],
 			buf[c.SuppliersCsvFormat.NameCol],
 			buf[c.SuppliersCsvFormat.PartnumCol],
 			buf[c.SuppliersCsvFormat.PriceCol],
 			buf[c.SuppliersCsvFormat.QuantityCol],
-			buf[c.SuppliersCsvFormat.RestCol] = readed[sup.BrandCol], readed[sup.ArticulCol], name, partnum, readed[sup.PriceCol], readed[sup.QuantityCol], strings.Trim(readed[sup.RestCol], "~<>")
+			buf[c.SuppliersCsvFormat.RestCol] = strings.TrimSpace(readed[sup.BrandCol]), normart(readed[sup.ArticulCol]), normnaim(name), partnum, normprice(readed[sup.PriceCol]), quantity, normnum(readed[sup.RestCol])
 		err = w.Write(buf)
 		if err != nil {
 			return err
@@ -345,4 +362,71 @@ func createContextWithInterruptSignal() (context.Context, context.CancelFunc) {
 		cancel()
 	}()
 	return ctx, cancel
+}
+
+type supplier struct {
+	Name        string
+	Email       string
+	Filename    string
+	Delimiter   string
+	Quotes      int
+	FirstRow    int
+	BrandCol    int
+	ArticulCol  int
+	NameCol     []int
+	PartnumCol  int
+	PriceCol    int
+	QuantityCol int
+	RestCol     int
+}
+
+func LoadSuppliers(path string) (map[string]supplier, error) {
+	files, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	sups := make(map[string]supplier)
+
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".txt") {
+			fmt.Println("LoadSuppliers", "nontxt founded:", f.Name())
+			continue
+		}
+
+		sfrm := supplier{}
+		err := confdecoder.DecodeFile(path+f.Name(), &sfrm)
+		if err != nil {
+			return nil, errors.New("read supplier's config file err: " + err.Error())
+		}
+		if sfrm.Name == "" || sfrm.Filename == "" {
+			fmt.Println("LoadSuppliers", "no data in supplier's config file:", f.Name())
+			continue
+		}
+
+		if _, ok := sups[sfrm.Name]; !ok {
+			sups[sfrm.Name] = sfrm
+		} else {
+			fmt.Println("LoadSuppliers", "supplier's config duplicates:", sfrm.Name)
+		}
+	}
+	return sups, nil
+}
+
+var pricerx = regexp.MustCompile("[^а-яa-z0-9.,]")
+var naimrx = regexp.MustCompile(`\s{2,}`)
+var artrx = regexp.MustCompile("[^а-яa-z0-9]")
+var numberrx = regexp.MustCompile(`[^0-9]`)
+
+func normprice(s string) string {
+	return pricerx.ReplaceAllString(s, "")
+}
+func normnum(s string) string {
+	return numberrx.ReplaceAllString(strings.ToLower(s), "")
+}
+func normnaim(s string) string {
+	return naimrx.ReplaceAllString(strings.TrimSpace(s), " ")
+}
+
+func normart(s string) string {
+	return artrx.ReplaceAllString(strings.ToLower(s), "")
 }

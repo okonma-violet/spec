@@ -1,0 +1,13 @@
+Name Росско
+Email price@rossko.ru
+Filename price11.csv
+Delimiter ,
+Quotes 1
+FirstRow 1
+BrandCol 1
+ArticulCol 2
+NameCol {3,12}
+PartnumCol 11
+PriceCol 6
+QuantityCol 5
+RestCol 8

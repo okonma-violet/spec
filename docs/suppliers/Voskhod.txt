@@ -1,0 +1,13 @@
+Name Восход
+Email noreply@v-auto.ru
+Filename price5.csv
+Delimiter ,
+Quotes 1
+FirstRow 2
+BrandCol 1
+ArticulCol 0
+NameCol 2
+PartnumCol -1
+PriceCol 5
+QuantityCol 4
+RestCol 3

@@ -1,0 +1,13 @@
+Name Тунгусов
+Email rassilka@news.wlbs.ru
+Filename price6.csv
+Delimiter ,
+Quotes 1
+FirstRow 1
+BrandCol 0
+ArticulCol 1
+NameCol 2
+PartnumCol -1
+PriceCol 3
+QuantityCol -1
+RestCol 4

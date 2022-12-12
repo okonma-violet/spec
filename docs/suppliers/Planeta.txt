@@ -1,0 +1,13 @@
+Name Планета
+Email noreply@a-trast.ru
+Filename price1.csv
+Delimiter ,
+Quotes 1
+FirstRow 1
+BrandCol 0
+ArticulCol 1
+NameCol 2
+PartnumCol -1
+PriceCol 3
+QuantityCol 5
+RestCol 4

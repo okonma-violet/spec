@@ -1,0 +1,13 @@
+Name Торекс
+Email torex@tpm.ru
+Filename price7.csv
+Delimiter ,
+Quotes 1
+FirstRow 6
+BrandCol 1
+ArticulCol 3
+NameCol 2
+PartnumCol -1
+PriceCol 8
+QuantityCol 7
+RestCol 10

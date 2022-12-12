@@ -1,0 +1,13 @@
+Name Forum-Auto
+Email post@mx.forum-auto.ru
+Filename price9.csv
+Delimiter ,
+Quotes 1
+FirstRow 3
+BrandCol 0
+ArticulCol 1
+NameCol {2,3}
+PartnumCol -1 
+PriceCol 4
+QuantityCol 6
+RestCol 5

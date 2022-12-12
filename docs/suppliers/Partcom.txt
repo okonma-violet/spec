@@ -1,0 +1,13 @@
+Name Партком
+Email support@part-kom.ru
+Filename price10.csv
+Delimiter ;
+Quotes 1
+FirstRow 0
+BrandCol 1
+ArticulCol 0
+NameCol 2
+PartnumCol -1
+PriceCol 3
+QuantityCol 5
+RestCol 4

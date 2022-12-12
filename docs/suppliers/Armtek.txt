@@ -1,0 +1,13 @@
+Name Армтек
+Email price@armtek.ru
+Filename price12.csv
+Delimiter ,
+Quotes 1
+FirstRow 1
+BrandCol 0
+ArticulCol 1
+NameCol 2
+PartnumCol -1
+PriceCol 6
+QuantityCol -1
+RestCol 5

@@ -22,7 +22,7 @@ type config struct {
 	TimerSeconds int
 }
 
-const unzippedpath = "./unzipped/"
+//const unzippedpath = "./unzipped/"
 
 func main() {
 	conf := &config{}
@@ -48,22 +48,23 @@ func main() {
 	l := flsh.NewLogsContainer("unzipper")
 
 	go func() {
-		ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
+		//ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
 		l.Debug("Job", "started")
 		do_job(l, cancel, conf)
 		l.Debug("Job", "done, sleeping")
-		for {
-			select {
-			case <-ctx.Done():
-				l.Info("Routine", "context done, exiting loop")
-				return
-			case <-ticker.C:
-				l.Debug("Job", "started")
-				do_job(l, cancel, conf)
-				l.Debug("Job", "done, sleeping")
-			}
+		cancel()
+		// for {
+		// 	select {
+		// 	case <-ctx.Done():
+		// 		l.Info("Routine", "context done, exiting loop")
+		// 		return
+		// 	case <-ticker.C:
+		// 		l.Debug("Job", "started")
+		// 		do_job(l, cancel, conf)
+		// 		l.Debug("Job", "done, sleeping")
+		// 	}
 
-		}
+		// }
 	}()
 
 	<-ctx.Done()
@@ -84,10 +85,10 @@ func do_job(l logger.Logger, cancel context.CancelFunc, conf *config) {
 	for _, f := range files {
 		fname_lowered := strings.ToLower(f.Name())
 		if f.IsDir() || !strings.HasSuffix(fname_lowered, ".zip") {
-			l.Warning("Unzip/ReadDir", "nonzip file founded: "+f.Name())
+			//l.Warning("Unzip/ReadDir", "nonzip file founded: "+f.Name())
 			continue
 		}
-		if out, err := unzip(conf.ZipPath+f.Name(), unzippedpath); err != nil {
+		if out, err := unzip(conf.ZipPath+f.Name(), conf.ZipPath); err != nil {
 			l.Error("Unzip", errors.New(err.Error()+" \nout: "+out))
 			continue
 		}
@@ -100,7 +101,7 @@ func do_job(l logger.Logger, cancel context.CancelFunc, conf *config) {
 	l.Debug("Unzip", "done")
 
 	l.Debug("ConvertToCsv", "started")
-	files, err = os.ReadDir(unzippedpath)
+	files, err = os.ReadDir(conf.ZipPath)
 	if err != nil {
 		l.Error("ConvertToCsv/ReadDir", err)
 		cancel()
@@ -114,20 +115,18 @@ func do_job(l logger.Logger, cancel context.CancelFunc, conf *config) {
 			l.Warning("ConvertToCsv/ReadDir", "dir founded "+f.Name())
 			continue
 		} else if strings.Contains(fname_lowered, ".xls") {
-			if out, err := converttocsv(unzippedpath + f.Name()); err != nil {
+			if out, err := converttocsv(conf.ZipPath + f.Name()); err != nil {
 				l.Error("ConvertToCsv", errors.New(err.Error()+" \nout: "+out))
 				continue
 			}
 			l.Debug("ConvertToCsv", "converted "+f.Name())
-			if err = os.Remove(unzippedpath + f.Name()); err != nil {
-				l.Error("ConvertToCsv/Remove", err)
-			}
-			l.Debug("ConvertToCsv", "removed "+f.Name())
-		} else if strings.Contains(fname_lowered, ".csv") {
-			continue
-		} else {
-			l.Warning("ConvertToCsv/ReadDir", "nonxls && noncsv file founded "+f.Name())
-		}
+			// if err = os.Remove(unzippedpath + f.Name()); err != nil {
+			// 	l.Error("ConvertToCsv/Remove", err)
+			// }
+			//l.Debug("ConvertToCsv", "removed "+f.Name())
+		} //else {
+		//l.Warning("ConvertToCsv/ReadDir", "nonxls && noncsv file founded "+f.Name())
+		//}
 	}
 	l.Debug("ConvertToCsv", "done")
 
@@ -147,7 +146,7 @@ func do_job(l logger.Logger, cancel context.CancelFunc, conf *config) {
 			l.Debug("Movecsv", "moved ./"+f.Name())
 		}
 	}
-	files, err = os.ReadDir(unzippedpath)
+	files, err = os.ReadDir(conf.ZipPath)
 	if err != nil {
 		l.Error("Movecsv/ReadDir", err)
 		cancel()
@@ -155,11 +154,11 @@ func do_job(l logger.Logger, cancel context.CancelFunc, conf *config) {
 	}
 	for _, f := range files {
 		if !f.IsDir() && strings.HasSuffix(f.Name(), ".csv") {
-			if err = os.Rename(unzippedpath+f.Name(), conf.CsvPath+f.Name()); err != nil {
+			if err = os.Rename(conf.ZipPath+f.Name(), conf.CsvPath+f.Name()); err != nil {
 				l.Error("Movecsv/Rename", err)
 				continue
 			}
-			l.Debug("Movecsv", "moved "+unzippedpath+f.Name())
+			l.Debug("Movecsv", "moved "+conf.ZipPath+f.Name())
 		}
 	}
 
