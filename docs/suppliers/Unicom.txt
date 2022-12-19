@@ -11,3 +11,5 @@ PartnumCol -1
 PriceCol 4
 QuantityCol 6
 RestCol 5
+RawCsvNamePattern_Prefix автодок.
+RawCsvNamePattern_Suffix  

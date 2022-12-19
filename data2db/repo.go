@@ -13,54 +13,29 @@ import (
 	"github.com/jackc/pgx/pgconn"
 )
 
+// TODO: яебу как уникальность additional_articul в articuls обозначить
+
 var ErrDuplicate = errors.New("duplicates")
 var ErrNotExists = errors.New("not found")
 
 type repo struct {
 	db *pgx.Conn
-	//unsortedProductsByArt map[string]*[]*product
-	//sortedProducts        []*product
-	//categoriesByKeyword   map[string]*category
 }
 
-type category struct {
-	id   int
-	name string
-	norm string
+func (r *repo) OpenDBRepository(connectionString string) (err error) {
+	r.db, err = pgx.Connect(context.Background(), connectionString)
+	return err
 }
 
-type product struct {
-	id         int
-	categoryid int
-	supplierid int
-	brandid    int
-	name       string
-	articul    string
-	partnum    string
-	price      float32
-	quantity   int
-	rest       int
-}
-
-type brand struct {
-	id   int
-	name string
-	norm []string
-}
-
-func OpenRepository(connectionString string) (*repo, error) {
-	db, err := pgx.Connect(context.Background(), connectionString)
-	if err != nil {
-		return nil, err
-	}
-	return &repo{db: db}, nil
-}
-
-func (rep *repo) Migrate() error {
-	query := `
-	DROP TABLE IF EXISTS products,articuls,unsorted_products,categories,categories_keyphrases,products_keywords,suppliers,brands,prices CASCADE;
-	DROP SEQUENCE IF EXISTS products_unique_id,unsorted_products_unique_id;
+func (rep *repo) Migrate(droptables bool) error {
+	var query string
+	if droptables {
+		query += `
+		DROP TABLE IF EXISTS products,articuls,unsorted_products,categories,uploads,categories_keyphrases,products_keywords,suppliers,brands,prices_actual,prices_history CASCADE;
+		DROP SEQUENCE IF EXISTS products_unique_id,unsorted_products_unique_id;
 	`
+	}
+
 	query += `
 	CREATE TABLE "brands" (
 		"id"	SERIAL NOT NULL PRIMARY KEY,
@@ -88,30 +63,27 @@ func (rep *repo) Migrate() error {
 		FOREIGN KEY("categoryid") REFERENCES "categories"("id")
 	);
     `
-
+	query += `
+	CREATE TABLE "uploads" (
+		"id" SERIAL NOT NULL PRIMARY KEY,
+		"time"  TIMESTAMP NOT NULL DEFAULT current_timestamp
+	);
+    `
 	query += `
 	CREATE TABLE "suppliers" (
 		"id"	SERIAL NOT NULL PRIMARY KEY,
 		"name"	TEXT NOT NULL,
 		"email"	TEXT NOT NULL,
 		"filename"	TEXT NOT NULL,
-		"delimiter"	TEXT NOT NULL,
-		"quotes"	BOOL NOT NULL,
-		"firstrow"	INTEGER NOT NULL,
-		"brandcol"	INTEGER NOT NULL,
-		"articulcol"	INTEGER NOT NULL,
-		"namecol"	INTEGER ARRAY NOT NULL,
-		"partnumcol"	INTEGER NOT NULL,
-		"pricecol"	INTEGER NOT NULL,
-		"quantitycol"	INTEGER NOT NULL,
-		"restcol"	INTEGER NOT NULL,
-		UNIQUE("filename")
+		UNIQUE("filename"),
+		UNIQUE("name")
 	);
 	`
 
 	query += `
 	CREATE TABLE "articuls" (
 		"articul" TEXT NOT NULL,
+		"additional_articul" TEXT ARRAY,
 		"brandid" INTEGER NOT NULL,
 		"categoryid" INTEGER,
 		UNIQUE("articul","brandid"),
@@ -129,7 +101,7 @@ func (rep *repo) Migrate() error {
 		"name"	TEXT NOT NULL,
 		"partnum"	TEXT,
 		"quantity" INTEGER,
-		"hash" TEXT NOT NULL,
+		"hash" CHAR(32) NOT NULL,
 		UNIQUE("hash"),
 		FOREIGN KEY("articul","brandid") REFERENCES "articuls"("articul","brandid"),
 		FOREIGN KEY("supplierid") REFERENCES "suppliers"("id")
@@ -137,13 +109,24 @@ func (rep *repo) Migrate() error {
     `
 
 	query += `
-	CREATE TABLE "prices" (
+	CREATE TABLE "prices_actual" (
 		"productid" INTEGER NOT NULL,
 		"price" REAL NOT NULL,
 		"rest" INTEGER,
-		"updated" TIMESTAMP NOT NULL DEFAULT current_timestamp,
+		"uploadid" INTEGER NOT NULL,
 		UNIQUE("productid"),
-		FOREIGN KEY("productid") REFERENCES "products"("id")
+		FOREIGN KEY("productid") REFERENCES "products"("id"),
+		FOREIGN KEY("uploadid") REFERENCES "uploads"("id")
+	);
+    `
+	query += `
+	CREATE TABLE "prices_history" (
+		"productid" INTEGER NOT NULL,
+		"price" REAL NOT NULL,
+		"rest" INTEGER,
+		"uploadid" INTEGER NOT NULL,
+		FOREIGN KEY("productid") REFERENCES "products"("id"),
+		FOREIGN KEY("uploadid") REFERENCES "uploads"("id")
 	);
     `
 
@@ -152,6 +135,14 @@ func (rep *repo) Migrate() error {
 	`
 	_, err := rep.db.Exec(context.Background(), query)
 	return err
+}
+
+func (r *repo) CreateUpload() (int, error) {
+	id := 0
+	if err := r.db.QueryRow(context.Background(), "INSERT INTO uploads(time) values(now()) RETURNING id").Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (r *repo) AddCategory(name, normname string) (int, error) {
@@ -228,23 +219,40 @@ func (r *repo) GetOrCreateProduct(articul string, supplierid, brandid int, name 
 	return id, nil
 }
 
-func (r *repo) UpsertPrice(productid int, price float32, rest int) error {
-	_, err := r.db.Exec(context.Background(), `INSERT INTO prices(productid,price,rest)
-	values($1,$2,$3)
+func (r *repo) UpsertActualPrice(productid, uploadid int, price float32, rest int) error {
+	_, err := r.db.Exec(context.Background(), `INSERT INTO prices_actual(productid,uploadid,price,rest)
+	values($1,$2,$3,$4)
 	ON CONFLICT (productid) 
-	DO UPDATE SET price=EXCLUDED.price,rest=EXCLUDED.rest,updated=now()`, productid, price, rest)
+	DO UPDATE SET price=EXCLUDED.price,rest=EXCLUDED.rest,uploadid=EXCLUDED.uploadid`, productid, uploadid, price, rest)
 	return err
 }
 
-func (r *repo) CreateArticul(articul string, brandid int) error {
-	if _, err := r.db.Exec(context.Background(), "INSERT INTO articuls(articul,brandid,categoryid) values($1,$2,null)", articul, brandid); err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
-			return ErrDuplicate
-		}
-		return err
-	}
-	return nil
+func (r *repo) InsertHistoryPrice(productid, uploadid int, price float32, rest int) error {
+	_, err := r.db.Exec(context.Background(), `INSERT INTO prices_history(productid,uploadid,price,rest)
+	values($1,$2,$3,$4)`, productid, uploadid, price, rest)
+	return err
+}
+
+// adds additional articules if not exists or ones not equal with given
+func (r *repo) UpsertArticul(articul string, brandid int, additional_articuls []string) error {
+	_, err := r.db.Exec(context.Background(), `INSERT INTO articuls(articul,additional_articul,brandid,categoryid)
+	VALUES($1,$2,$3,null)
+	ON CONFLICT (articul,brandid)
+	DO UPDATE SET additional_articul=EXCLUDED.additional_articul
+	WHERE articuls.additional_articul<>EXCLUDED.additional_articul`, articul, additional_articuls, brandid)
+
+	return err
+}
+
+// appends nonexisting additional_articuls
+func (r *repo) UpsertArticul_NoAdditionalArticulesRewriting(articul string, brandid int, additional_articuls []string) error {
+	_, err := r.db.Exec(context.Background(), `INSERT INTO articuls(articul,additional_articul,brandid,categoryid)
+	VALUES($1,$2,$3,null)
+	ON CONFLICT (articul,brandid)
+	DO UPDATE SET additional_articul= (select array_agg(distinct e) from unnest(additional_articul || EXCLUDED.additional_articul) e)
+	WHERE NOT additional_articul @> EXCLUDED.additional_articul`, articul, additional_articuls, brandid)
+
+	return err
 }
 func (r *repo) UpdateArticulCategory(articul string, brandid, categoryid int) error {
 	ct, err := r.db.Exec(context.Background(), "UPDATE articuls SET categoryid = $1 WHERE articul = $2 AND brandid = $3", categoryid, articul, brandid)
@@ -321,25 +329,15 @@ func (r *repo) GetBrandIdByNorm(norm string) (int, error) {
 }
 
 type supplier struct {
-	id          int
-	Name        string
-	Email       string
-	Filename    string
-	Delimiter   string
-	Quotes      int
-	FirstRow    int
-	BrandCol    int
-	ArticulCol  int
-	NameCol     []int
-	PartnumCol  int
-	PriceCol    int
-	QuantityCol int
-	RestCol     int
+	id       int
+	Name     string
+	Email    string
+	Filename string
 }
 
-func (r *repo) CreateSupplier(name, email, filename, delimiter string, quotes bool, firstrow, brandcol, articulcol int, namecol []int, partnumcol, pricecol, quantitycol, restcol int) (int, error) {
+func (r *repo) CreateSupplier(name, email, filename string) (int, error) {
 	id := 0
-	if err := r.db.QueryRow(context.Background(), "INSERT INTO suppliers(name,email,filename,delimiter,quotes,firstrow,brandcol,articulcol,namecol,partnumcol,pricecol,quantitycol,restcol) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id", name, strings.ToLower(email), strings.ToLower(filename), delimiter, quotes, firstrow, brandcol, articulcol, namecol, partnumcol, pricecol, quantitycol, restcol).Scan(&id); err != nil {
+	if err := r.db.QueryRow(context.Background(), "INSERT INTO suppliers(name,email,filename) values($1,$2,$3) RETURNING id", name, strings.ToLower(email), strings.ToLower(filename)).Scan(&id); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
 			return 0, ErrDuplicate
@@ -351,16 +349,12 @@ func (r *repo) CreateSupplier(name, email, filename, delimiter string, quotes bo
 
 func (r *repo) GetSupplierByFilename(filename string) (*supplier, error) {
 	sup := supplier{}
-	var quotes bool
-	if err := r.db.QueryRow(context.Background(), "SELECT id,name,email,filename,delimiter,quotes,firstrow,brandcol,articulcol,namecol,partnumcol,pricecol,quantitycol,restcol FROM suppliers WHERE filename=($1)", filename).Scan(
-		&sup.id, &sup.Name, &sup.Email, &sup.Filename, &sup.Delimiter, &quotes, &sup.FirstRow, &sup.BrandCol, &sup.ArticulCol, &sup.NameCol, &sup.PartnumCol, &sup.PriceCol, &sup.QuantityCol, &sup.RestCol); err != nil {
+	if err := r.db.QueryRow(context.Background(), "SELECT id,name,email,filename FROM suppliers WHERE filename=($1)", filename).Scan(
+		&sup.id, &sup.Name, &sup.Email, &sup.Filename); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotExists
 		}
 		return nil, err
-	}
-	if quotes {
-		sup.Quotes = 1
 	}
 	return &sup, nil
 }

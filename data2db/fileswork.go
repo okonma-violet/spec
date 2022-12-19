@@ -15,7 +15,7 @@ import (
 	"github.com/okonma-violet/confdecoder"
 )
 
-func (r *repo) AddBrands(filepath string) error {
+func (r *repo) loadBrandsFromFile(filepath string) error {
 	file, err := os.Open(filepath)
 	if err != nil {
 		return err
@@ -37,6 +37,9 @@ func (r *repo) AddBrands(filepath string) error {
 		row, err := rdr.Read()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				break
+			}
+			if errors.Is(err, csv.ErrFieldCount) {
 				break
 			}
 			return err
@@ -75,7 +78,7 @@ func (r *repo) AddBrands(filepath string) error {
 	return nil
 }
 
-func (r *repo) AddSuppliers(path string) error {
+func (r *repo) loadSuppliersConfigsFromDir(path string) error {
 	files, err := os.ReadDir(path)
 	if err != nil {
 		panic(err)
@@ -100,17 +103,7 @@ func (r *repo) AddSuppliers(path string) error {
 		if _, err = r.CreateSupplier(
 			sfrm.Name,
 			sfrm.Email,
-			sfrm.Filename,
-			sfrm.Delimiter,
-			sfrm.Quotes == 1,
-			sfrm.FirstRow,
-			sfrm.BrandCol,
-			sfrm.ArticulCol,
-			sfrm.NameCol,
-			sfrm.PartnumCol,
-			sfrm.PriceCol,
-			sfrm.QuantityCol,
-			sfrm.RestCol); err != nil {
+			sfrm.Filename); err != nil {
 			if errors.Is(err, ErrDuplicate) {
 				dups++
 				continue
@@ -123,31 +116,7 @@ func (r *repo) AddSuppliers(path string) error {
 	return nil
 }
 
-// func keywords2csv(filepath string, keywords map[string]struct{}) error {
-// 	if !strings.HasSuffix(filepath, ".csv") {
-// 		panic("not a csv")
-// 	}
-// 	file, err := os.OpenFile(filepath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
-// 	if err != nil {
-// 		return (err)
-// 	}
-// 	defer file.Close()
-
-// 	w := csv.NewWriter(file)
-// 	w.Comma = []rune(";")[0]
-// 	w.UseCRLF = true
-
-// 	ind := 1
-// 	for kw := range keywords {
-// 		if err = w.Write([]string{strconv.Itoa(ind), kw, ""}); err != nil {
-// 			return err
-// 		}
-// 		ind++
-// 	}
-// 	return nil
-// }
-
-func (rep *repo) addCategoriesWithKeyphrases2db(filepath string) error {
+func (rep *repo) loadCategoriesWithKeyphrasesFromFile(filepath string) error {
 	file, err := os.Open(filepath)
 	if err != nil {
 		return (err)
@@ -195,4 +164,52 @@ func (rep *repo) addCategoriesWithKeyphrases2db(filepath string) error {
 		}
 	}
 	return nil
+}
+
+type altarticul struct {
+	primary string
+	alt     []string
+}
+
+func loadAlternativeArticulesFromFile(filepath string) (map[string]*altarticul, error) {
+	file, err := os.Open(filepath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	r := csv.NewReader(file)
+	r.ReuseRecord = true
+	r.Comma = []rune(";")[0]
+	r.FieldsPerRecord = 2
+	if _, err = r.Read(); err != nil { // skip head
+		return nil, err
+	}
+
+	alternative_articules := make(map[string]*altarticul)
+loop:
+	for {
+		row, err := r.Read()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, err
+		}
+		normprimary := normstring(row[0])
+		normalt := normstring(row[1])
+		if _, ok := alternative_articules[normprimary]; ok {
+			if _, altok := alternative_articules[normalt]; altok {
+				continue loop
+			}
+			alternative_articules[normprimary].alt = append(alternative_articules[normprimary].alt, normalt)
+			alternative_articules[normalt] = alternative_articules[normprimary]
+		} else {
+			aa := &altarticul{primary: normprimary, alt: []string{normalt}}
+			alternative_articules[normprimary] = aa
+			alternative_articules[normalt] = aa
+		}
+
+	}
+	return alternative_articules, nil
 }

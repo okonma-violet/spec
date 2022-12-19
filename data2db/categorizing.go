@@ -155,3 +155,38 @@ func (ca comparativeArray) findMatch(str string) *keyPhrase {
 // 	}
 // 	return nil
 // }
+
+// func findKeywords(prods []product, wordsnum int) []string {
+// 	delim := []rune(" ")[0]
+// 	res := make([]string, 0)
+// loop:
+// 	for i, lk, k, entries := 0, 0, 0, 0; i < len(prods); i, lk, k, entries = i+1, 0, 0, 0 {
+// 		rw := []rune(strings.ToLower(strings.TrimSpace(prods[i].name)))
+
+// 		for k < len(rw) {
+// 			if rw[k] == delim {
+// 				if k-lk > 3 {
+// 					entries++
+// 				}
+// 				lk = k
+// 			}
+// 			if entries == wordsnum {
+// 				break
+// 			}
+// 			k++
+// 		}
+// 		if entries < wordsnum {
+// 			lk = k
+// 		}
+// 		if lk > 0 {
+// 			rs := string(rw[:lk])
+// 			for g := 0; g < len(res); g++ {
+// 				if res[g] == rs {
+// 					continue loop
+// 				}
+// 			}
+// 			res = append(res, rs)
+// 		}
+// 	}
+// 	return res
+// }

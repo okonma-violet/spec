@@ -11,3 +11,5 @@ PartnumCol -1
 PriceCol 6
 QuantityCol -1
 RestCol 5
+RawCsvNamePattern_Prefix прайс армтек
+RawCsvNamePattern_Suffix 

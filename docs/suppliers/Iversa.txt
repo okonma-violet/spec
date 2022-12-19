@@ -11,3 +11,5 @@ PartnumCol 5
 PriceCol 7
 QuantityCol 8
 RestCol 6
+RawCsvNamePattern_Prefix price_ekb2
+RawCsvNamePattern_Suffix  

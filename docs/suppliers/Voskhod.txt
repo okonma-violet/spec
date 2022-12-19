@@ -11,3 +11,5 @@ PartnumCol -1
 PriceCol 5
 QuantityCol 4
 RestCol 3
+RawCsvNamePattern_Prefix обществосограниченнойответственностью
+RawCsvNamePattern_Suffix  
