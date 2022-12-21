@@ -1,4 +1,5 @@
-DownloadsPath ../docs/test/zip/
+#DownloadsPath ../docs/test/zip/
+DownloadsPath ./dwnlds/
 CsvPath ../docs/test/csv/
 TimerSeconds 180
 SuppliersConfsPath ../docs/suppliers/

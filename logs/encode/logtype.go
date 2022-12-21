@@ -38,3 +38,17 @@ func (lt LogType) ByteStr() []byte {
 	}
 	return []byte("UNK")
 }
+
+func (lt LogType) Colorize() string {
+	switch lt {
+	case Debug:
+		return "\033[32m" // Green
+	case Info:
+		return "\033[36m" // Gay
+	case Warning:
+		return "\033[33m" // Yellow
+	case Error:
+		return "\033[31m" // Red
+	}
+	return "\033[35m" // Purple
+}

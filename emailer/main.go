@@ -115,7 +115,7 @@ func loadSuppliersConfigsFromDir(l logger.Logger, path string) ([]supplier, erro
 		}
 
 		for i := 0; i < len(sups); i++ {
-			if sups[i].Name == sfrm.Name || sups[i].Email == sfrm.Email {
+			if sups[i].Name == sfrm.Name {
 				return nil, errors.New("supplier's config duplicates: " + sfrm.Name)
 			}
 		}

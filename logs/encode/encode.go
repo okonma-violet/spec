@@ -77,7 +77,7 @@ func DecodeToString(log []byte) string {
 }
 
 func PrintLog(log []byte) {
-	println(DecodeToString(log))
+	println(LogType(log[0]).Colorize(), DecodeToString(log))
 }
 
 func GetLogLvl(log []byte) LogsFlushLevel {
