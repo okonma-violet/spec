@@ -11,6 +11,10 @@ PartnumCol -1
 PriceCol 3
 QuantityCol 5
 RestCol 4
+
 RawCsvNamePattern_Prefix price4autodocplus_ekat
 RawCsvNamePattern_Suffix  
 Charset 1251
+
+MailFileNamePattern_Prefixes {price4autodocplus_ekat.csv}
+MailFileNamePattern_Suffixes {}

@@ -13,3 +13,6 @@ QuantityCol 6
 RestCol 5
 RawCsvNamePattern_Prefix forum_
 RawCsvNamePattern_Suffix  
+
+MailFileNamePattern_Prefixes {forum}
+MailFileNamePattern_Suffixes {ekt.zip}

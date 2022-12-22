@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -43,12 +44,16 @@ func main() {
 	ctx, cancel := createContextWithInterruptSignal()
 
 	flsh := logger.NewFlusher(encode.DebugLevel)
-	l := flsh.NewLogsContainer("csvformatter")
+	l := flsh.NewLogsContainer("emailer")
 
 	go func() {
 		//ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
 		l.Debug("Job", "started")
 		sups, err := loadSuppliersConfigsFromDir(l, conf.SuppliersConfsPath)
+		for i, s := range sups {
+			fmt.Println(i)
+			fmt.Println(s)
+		}
 		if err != nil {
 			l.Error("LoadSuppliers", err)
 			cancel()
@@ -87,8 +92,10 @@ func main() {
 }
 
 type supplier struct {
-	Name  string
-	Email string
+	Name                         string
+	Email                        string
+	MailFileNamePattern_Prefixes []string
+	MailFileNamePattern_Suffixes []string
 }
 
 func loadSuppliersConfigsFromDir(l logger.Logger, path string) ([]supplier, error) {
@@ -100,7 +107,7 @@ func loadSuppliersConfigsFromDir(l logger.Logger, path string) ([]supplier, erro
 
 	for _, f := range files {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".txt") {
-			l.Warning("LoadSuppliers", "nontxt & nonzip founded: "+f.Name())
+			l.Warning("LoadSuppliers", "nontxt file founded: "+f.Name())
 			continue
 		}
 
@@ -110,8 +117,22 @@ func loadSuppliersConfigsFromDir(l logger.Logger, path string) ([]supplier, erro
 			return nil, errors.New("read supplier's config file err: " + err.Error())
 		}
 		if sfrm.Name == "" || sfrm.Email == "" {
-			l.Error("LoadSuppliers", errors.New("no data in supplier's config file: "+f.Name()))
-			continue
+			// l.Error("LoadSuppliers", errors.New("no data in supplier's config file: "+f.Name()))
+			// continue
+			return nil, errors.New("no data in supplier's config file: " + f.Name())
+		}
+
+		if len(sfrm.MailFileNamePattern_Prefixes) == 0 {
+			if len(sfrm.MailFileNamePattern_Suffixes) == 0 {
+				// l.Error("LoadSuppliers", errors.New("no mail files specified in config file: "+f.Name()))
+				// continue
+				return nil, errors.New("no mail files specified in config file: " + f.Name())
+			} else {
+				sfrm.MailFileNamePattern_Prefixes = make([]string, len(sfrm.MailFileNamePattern_Suffixes))
+			}
+		}
+		if len(sfrm.MailFileNamePattern_Suffixes) == 0 {
+			sfrm.MailFileNamePattern_Suffixes = make([]string, len(sfrm.MailFileNamePattern_Prefixes))
 		}
 
 		for i := 0; i < len(sups); i++ {

@@ -13,3 +13,6 @@ QuantityCol 6
 RestCol 5
 RawCsvNamePattern_Prefix автодок.
 RawCsvNamePattern_Suffix  
+
+MailFileNamePattern_Prefixes {автодок}
+MailFileNamePattern_Suffixes {}

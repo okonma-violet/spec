@@ -12,4 +12,7 @@ PriceCol 3
 QuantityCol -1
 RestCol 4
 RawCsvNamePattern_Prefix прайс лист для клиентов
-RawCsvNamePattern_Suffix  
+RawCsvNamePattern_Suffix 
+
+MailFileNamePattern_Prefixes {прайс лист для клиентов}
+MailFileNamePattern_Suffixes 

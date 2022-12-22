@@ -13,3 +13,6 @@ QuantityCol 4
 RestCol 3
 RawCsvNamePattern_Prefix обществосограниченнойответственностью
 RawCsvNamePattern_Suffix  
+
+MailFileNamePattern_Prefixes {обществосограниченнойответственностью}
+MailFileNamePattern_Suffixes {}

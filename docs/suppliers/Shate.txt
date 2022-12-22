@@ -11,6 +11,11 @@ PartnumCol -1
 PriceCol 6
 QuantityCol 4
 RestCol 3
+
 RawCsvNamePattern_Prefix export_ekaterinburg
 RawCsvNamePattern_Suffix  
+
 Charset 1251
+
+MailFileNamePattern_Prefixes {export_ekaterinburg}
+MailFileNamePattern_Suffixes {}

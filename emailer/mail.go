@@ -2,8 +2,9 @@ package main
 
 import (
 	"errors"
+
 	"io"
-	"io/ioutil"
+
 	"os"
 
 	"strconv"
@@ -68,7 +69,7 @@ func checkMail(l logger.Logger, downloadspath string, suppliers []supplier) erro
 	l.Debug("checkMail", "Flags for INBOX: ["+strings.Join(mbox.Flags, ", ")+"]")
 
 	// Get the last 4 messages
-	data, err := ioutil.ReadFile("lastmessage")
+	data, err := os.ReadFile("lastmessage")
 	if err != nil {
 		return err
 	}
@@ -88,24 +89,16 @@ func checkMail(l logger.Logger, downloadspath string, suppliers []supplier) erro
 	go func() {
 		done <- c.Fetch(seqset, []imap.FetchItem{imap.FetchEnvelope, section.FetchItem()}, messages)
 	}()
-
+	var has_suitabled int
 	for msg := range messages {
 		//log.Println("* "+msg.Envelope.Subject, msg.Envelope.From[0].Address(), len(msg.Items), len(msg.Body))
-		if !IsSupplierEmail(suppliers, msg.Envelope.From[0].Address()) {
+		cur_sups := getSupsByMail(suppliers, msg.Envelope.From[0].Address())
+		if len(cur_sups) == 0 {
 			continue
 		}
-
-		// log.Println("Fetching", msg.SeqNum)
-		// seqset1 := new(imap.SeqSet)
-		// seqset1.AddNum(msg.SeqNum)
-		// m := make(chan *imap.Message, 1)
-		// if err := c.Fetch(seqset1, []imap.FetchItem{section.FetchItem()}, m); err != nil {
-		// 	return err
-		// }
-		// msg = <-m
 		r := msg.GetBody(&section)
 		if r == nil {
-			return errors.New("Server didn't returned message body")
+			return errors.New("server didn't returned message body")
 		}
 
 		// Create a new mail reader
@@ -120,7 +113,7 @@ func checkMail(l logger.Logger, downloadspath string, suppliers []supplier) erro
 			l.Debug("checkMail", "Date: "+date.String())
 		}
 		if from, err := header.AddressList("From"); err == nil {
-			frs := "["
+			var frs string
 			for _, fr := range from {
 				frs += " " + fr.String()
 			}
@@ -152,6 +145,11 @@ func checkMail(l logger.Logger, downloadspath string, suppliers []supplier) erro
 				// This is an attachment
 				filename, _ := h.Filename()
 				l.Debug("checkMail", "Got attachment: "+filename)
+				if !suitableFilename(cur_sups, filename) {
+					l.Debug("checkMail", "Not suitable attachment: "+filename)
+					continue
+				}
+				has_suitabled++
 				// Create file with attachment name
 				file, err := os.Create(downloadspath + filename)
 				if err != nil {
@@ -166,9 +164,12 @@ func checkMail(l logger.Logger, downloadspath string, suppliers []supplier) erro
 				file.Close()
 				l.Debug("checkMail", "Saved "+strconv.FormatInt(size, 10)+" bytes into "+filename)
 			}
-			if err = ioutil.WriteFile("lastmessage", []byte(strconv.Itoa(int(msg.SeqNum))), 0644); err != nil {
+			if err = os.WriteFile("lastmessage", []byte(strconv.Itoa(int(msg.SeqNum))), 0644); err != nil {
 				return err
 			}
+		}
+		if has_suitabled < 1 {
+			l.Warning("checkMail", "No suitabled attachments in message from: "+msg.Envelope.From[0].Address())
 		}
 
 	}
@@ -186,6 +187,30 @@ func IsSupplierEmail(suppliers []supplier, email string) bool {
 	for _, s := range suppliers {
 		if s.Email == email {
 			return true
+		}
+	}
+	return false
+}
+
+func getSupsByMail(sups []supplier, email string) []*supplier {
+	email = strings.ToLower(email)
+	res := make([]*supplier, 0)
+	for i := 0; i < len(sups); i++ {
+		if sups[i].Email == email {
+
+			res = append(res, &sups[i])
+		}
+	}
+	return res
+}
+
+func suitableFilename(sups []*supplier, filename string) bool {
+	filename = strings.ToLower(filename)
+	for i := 0; i < len(sups); i++ {
+		for k := 0; k < len(sups[i].MailFileNamePattern_Prefixes); k++ {
+			if strings.HasPrefix(filename, sups[i].MailFileNamePattern_Prefixes[k]) && strings.HasSuffix(filename, sups[i].MailFileNamePattern_Suffixes[k]) {
+				return true
+			}
 		}
 	}
 	return false

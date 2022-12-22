@@ -13,3 +13,6 @@ QuantityCol 7
 RestCol 4
 RawCsvNamePattern_Prefix berg_
 RawCsvNamePattern_Suffix  
+
+MailFileNamePattern_Prefixes {berg_}
+MailFileNamePattern_Suffixes 

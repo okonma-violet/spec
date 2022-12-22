@@ -13,3 +13,6 @@ QuantityCol 8
 RestCol 6
 RawCsvNamePattern_Prefix price_ekb2
 RawCsvNamePattern_Suffix  
+
+MailFileNamePattern_Prefixes {price_ekb2.zip}
+MailFileNamePattern_Suffixes {}
