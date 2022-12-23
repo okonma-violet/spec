@@ -146,11 +146,11 @@ func main() {
 					l.Error("OpenDBRepository", err)
 					l.Debug("Job", "cant work without db connection, sleeping")
 				} else {
-					conf.upload(l, rep)
+					conf.upload(l, rep, *rp)
 					l.Debug("Job", "done")
 				}
 			} else {
-				conf.upload(l, rep)
+				conf.upload(l, rep, *rp)
 				l.Debug("Job", "done")
 			}
 
@@ -170,7 +170,7 @@ func main() {
 							continue
 						}
 					}
-					conf.upload(l, rep)
+					conf.upload(l, rep, *rp)
 					l.Debug("Job", "done, sleeping")
 				}
 			}
@@ -193,7 +193,7 @@ func main() {
 	flsh.DoneWithTimeout(time.Second * 5)
 }
 
-func (conf *config) upload(l logger.Logger, rep *repo) {
+func (conf *config) upload(l logger.Logger, rep *repo, remove_processed bool) {
 	var lckd bool
 	for i := 0; i < maxwaittimes; i++ {
 		if err := locker.LockDir(conf.ProductsCsvPath); err != nil {
@@ -249,6 +249,9 @@ fileloop:
 
 		l.Debug("Reading file", f.Name())
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".csv") {
+			if f.Name() == locker.LockfileName {
+				continue
+			}
 			l.Warning("Format/ReadDir", "noncsv file founded "+f.Name())
 			continue
 		}
@@ -362,6 +365,13 @@ fileloop:
 		}
 		l.Debug(sup.Name, "successfully added "+strconv.Itoa(sucs)+" of "+strconv.Itoa(all)+" from "+f.Name())
 		file.Close()
+
+		if remove_processed {
+			if err = os.Remove(conf.ProductsCsvPath + f.Name()); err != nil {
+				l.Error("Remove", err)
+			}
+			l.Debug("Remove", "file removed: "+f.Name())
+		}
 	}
 }
 
