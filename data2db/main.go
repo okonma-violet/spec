@@ -6,12 +6,19 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"time"
+
 	"io"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/okonma-violet/confdecoder"
+	"github.com/okonma-violet/spec/locker"
+	"github.com/okonma-violet/spec/logs/encode"
+	"github.com/okonma-violet/spec/logs/logger"
 )
 
 type config struct {
@@ -21,6 +28,8 @@ type config struct {
 	AlternativeArticulsFilePath string
 	SuppliersCsvFormatFilePath  string
 	CategoriesFilePath          string
+
+	TimerSeconds int
 
 	SuppliersCsvFormat *format
 }
@@ -37,6 +46,11 @@ type format struct {
 	QuantityCol int
 	RestCol     int
 }
+
+const waitdirlock_time = time.Second * 5
+const maxwaittimes = 3
+
+var needunlock bool
 
 // DROPS AND RECREATES ALL TABLES ON MIGRATION !!!!!!!!!!!!!!
 // TRUNCATES CATEGORY'S KEYWORD'S FILE EVERY LAUNCH !!!!!!!!!!!!!!
@@ -56,15 +70,23 @@ func main() {
 	if conf.SuppliersCsvFormat.Delimeter == "" {
 		panic("bad SuppliersCsvFormat")
 	}
-	mgrt := flag.Bool("migrate", false, "migrate tables")
-	drp := flag.Bool("drop", false, "drop tables if exists")
-	lb := flag.Bool("brands", false, "load brands from csv")
-	ls := flag.Bool("sups", false, "load sups configs")
-	lc := flag.Bool("cats", false, "load categories from csv")
-	upl := flag.Bool("upload", false, "upload products from csvs")
-	ctgrz := flag.Bool("categorize", false, "categorize")
+	mgrt := flag.Bool("m", false, "migrate tables")
+	drp := flag.Bool("d", false, "drop tables if exists")
+	lb := flag.Bool("b", false, "load brands from csv")
+	ls := flag.Bool("s", false, "load sups configs")
+	lc := flag.Bool("c", false, "load categories from csv")
+	upl := flag.Bool("u", false, "upload products from csvs")
+	ctgrz := flag.Bool("C", false, "categorize")
+	rp := flag.Bool("r", false, "remove processed csv files")
 	flag.Parse()
 
+	ctx, cancel := createContextWithInterruptSignal(&needunlock, conf.ProductsCsvPath)
+
+	flsh := logger.NewFlusher(encode.DebugLevel)
+	l := flsh.NewLogsContainer("data2db")
+	if *rp {
+		l.Info("Flag", "removing processed files enabled")
+	}
 	rep := &repo{}
 	err = rep.OpenDBRepository("postgres://ozon:q13471347@localhost:5432/ozondb")
 	if err != nil {
@@ -75,6 +97,11 @@ func main() {
 	conf.SuppliersConfsPath += "/"
 
 	if *mgrt {
+		if *drp {
+			l.Debug("Init", "Creating tables, drop if exists enabled")
+		} else {
+			l.Debug("Init", "Creating tables, drop if exists disabled")
+		}
 		if err = rep.Migrate(*drp); err != nil {
 			panic(err)
 		}
@@ -82,6 +109,7 @@ func main() {
 
 	// CREATING BRANDS
 	if *lb {
+		l.Debug("Init", "Load brands from file")
 		if err := rep.loadBrandsFromFile(conf.BrandsFilePath); err != nil {
 			panic(err)
 		}
@@ -89,6 +117,7 @@ func main() {
 
 	// CREATING SUPPLIERS
 	if *ls {
+		l.Debug("Init", "Load suppliers configs")
 		if err = rep.loadSuppliersConfigsFromDir(conf.SuppliersConfsPath); err != nil {
 			panic(err)
 		}
@@ -96,149 +125,56 @@ func main() {
 
 	// CREATING CATEGORIES WITH KEYPHRASES
 	if *lc {
+		l.Debug("Init", "Load categories with keyphrases")
 		if err = rep.loadCategoriesWithKeyphrasesFromFile(conf.CategoriesFilePath); err != nil {
 			panic(err)
 		}
 	}
 
-	// CREATING PRODUCTS
-	files, err := os.ReadDir(conf.ProductsCsvPath)
-	if err != nil {
-		panic(err)
-	}
-
 	// UPLOAD
+
 	if *upl {
-		fmt.Println("READ CSVs LOOP", "start")
+		go func() {
+			l.Info("Upload Routine", "loop started")
+			ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
+			l.Debug("Job", "started")
 
-		// CREATING ALTERNATIVE ARTICULES
-		altarts, err := loadAlternativeArticulesFromFile(conf.AlternativeArticulsFilePath)
-		if err != nil {
-			panic(err)
-		}
-		fmt.Println("AlternativeArticules", "loaded unique arts with alts: "+strconv.Itoa(len(altarts)))
-		for _, asd := range altarts {
-			if len(asd.alt) > 1 {
-				fmt.Println(asd)
-			}
-		}
-
-		// CREATE UPLOAD
-		uploadid, err := rep.CreateUpload()
-		if err != nil {
-			panic(err)
-		}
-		for _, f := range files {
-
-			fmt.Println("READING FILE", f.Name())
-			if f.IsDir() || !strings.HasSuffix(f.Name(), ".csv") {
-				fmt.Println("Format/ReadDir", "noncsv file founded "+f.Name())
-				continue
-			}
-			file, err := os.Open(conf.ProductsCsvPath + f.Name())
-			if err != nil {
-				panic(err)
-			}
-			defer file.Close()
-
-			// GET SUPPLIER
-			r := csv.NewReader(file)
-			r.Comma = []rune(conf.SuppliersCsvFormat.Delimeter)[0]
-			r.LazyQuotes = true
-			r.ReuseRecord = true
-			_, err = r.Read()
-			if err != nil {
-				panic(err)
+			if err = rep.db.Ping(ctx); err != nil {
+				l.Error("DB.Ping", err)
+				l.Debug("DB", "reconnecting")
+				if err = rep.OpenDBRepository("postgres://ozon:q13471347@localhost:5432/ozondb"); err != nil {
+					l.Error("OpenDBRepository", err)
+					l.Debug("Job", "cant work without db connection, sleeping")
+				} else {
+					conf.upload(l, rep)
+					l.Debug("Job", "done")
+				}
+			} else {
+				conf.upload(l, rep)
+				l.Debug("Job", "done")
 			}
 
-			sup, err := rep.GetSupplierByFilename(f.Name())
-			if err != nil {
-				fmt.Println("GetSupplierByFilename", f.Name(), err)
-				continue
-			}
-
-			var sucs, all int
-
-			// LOOP
 			for {
-				row, err := r.Read()
-				if err != nil {
-					if errors.Is(err, io.EOF) {
-						break
-					}
-					if errors.Is(err, csv.ErrFieldCount) {
-						continue
-					}
-					panic(err)
-				}
-				all++
-
-				// GET BRAND ID
-				normbrand := normstring(row[conf.SuppliersCsvFormat.BrandCol])
-				if normbrand == "" {
-					normbrand = "NO_BRAND"
-				}
-				brandid, err := rep.GetBrandIdByNorm(normstring(row[conf.SuppliersCsvFormat.BrandCol]))
-				if err != nil {
-					if errors.Is(err, ErrNotExists) {
-						fmt.Println("GetBrandIdByNorm", "not found brand", row[conf.SuppliersCsvFormat.BrandCol]+",", "creating one")
-						if brandid, err = rep.CreateBrand(strings.TrimSpace(row[conf.SuppliersCsvFormat.BrandCol]), []string{normstring(row[conf.SuppliersCsvFormat.BrandCol])}); err != nil {
-							fmt.Println("GetBrandIdByNorm/CreateBrand", err)
+				select {
+				case <-ctx.Done():
+					l.Info("Upload Routine", "context done, exiting loop")
+					return
+				case <-ticker.C:
+					l.Debug("Job", "started")
+					if err = rep.db.Ping(ctx); err != nil {
+						l.Error("DB.Ping", err)
+						l.Debug("DB", "reconnecting")
+						if err = rep.OpenDBRepository("postgres://ozon:q13471347@localhost:5432/ozondb"); err != nil {
+							l.Error("OpenDBRepository", err)
+							l.Debug("Job", "cant work without db connection, sleeping")
 							continue
 						}
-					} else {
-						fmt.Println("GetBrandIdByNorm", row, normstring(row[conf.SuppliersCsvFormat.BrandCol]), err)
-						continue
 					}
+					conf.upload(l, rep)
+					l.Debug("Job", "done, sleeping")
 				}
-
-				// CREATING ARTICUL
-				normart := normstring(row[conf.SuppliersCsvFormat.ArticulCol])
-				var alts []string
-				if a, ok := altarts[normart]; ok {
-					normart, alts = a.primary, a.alt
-				}
-				if err = rep.UpsertArticul(normart, brandid, alts); err != nil {
-					panic(err)
-				}
-
-				// GET SHIT
-				price, err := strconv.ParseFloat(strings.Replace(row[conf.SuppliersCsvFormat.PriceCol], ",", ".", 1), 32)
-				if err != nil {
-					fmt.Println("ParseFloat/Price", f.Name(), row[conf.SuppliersCsvFormat.PriceCol], row, err)
-					continue
-				}
-				quantity, err := strconv.Atoi(row[conf.SuppliersCsvFormat.QuantityCol])
-				if err != nil {
-					fmt.Println("Atoi/Quantity", quantity, row, err)
-					continue
-				}
-				rest, err := strconv.Atoi(strings.Trim(row[conf.SuppliersCsvFormat.RestCol], "<>~"))
-				if err != nil {
-					fmt.Println("Atoi/Rest", rest, f.Name(), row, err)
-					continue
-				}
-
-				// CREATE PRODUCT
-
-				prodid, err := rep.GetOrCreateProduct(normart, sup.id, brandid, row[conf.SuppliersCsvFormat.NameCol], row[conf.SuppliersCsvFormat.PartnumCol], quantity)
-				if err != nil {
-					fmt.Println("GetOrCreateProduct", row, err)
-					continue
-				}
-				if err = rep.UpsertActualPrice(prodid, uploadid, float32(price), rest); err != nil {
-					fmt.Println("UpsertPrice", row, err)
-					continue
-				}
-				if err = rep.InsertHistoryPrice(prodid, uploadid, float32(price), rest); err != nil {
-					fmt.Println("UpsertPrice", row, err)
-					continue
-				}
-				sucs++
 			}
-			fmt.Println("\nsuccesfully added:", sucs, "of", all, " from ", f.Name()+"\n")
-		}
-		fmt.Println("READ CSVs LOOP", "done")
+		}()
 	}
 
 	// CATEGORIZE UNCATEGORIZED
@@ -247,4 +183,199 @@ func main() {
 			fmt.Println("Categorize", err)
 		}
 	}
+
+	if !*upl {
+		cancel()
+	}
+	<-ctx.Done()
+	l.Debug("Context", "done, exiting")
+	flsh.Close()
+	flsh.DoneWithTimeout(time.Second * 5)
+}
+
+func (conf *config) upload(l logger.Logger, rep *repo) {
+	var lckd bool
+	for i := 0; i < maxwaittimes; i++ {
+		if err := locker.LockDir(conf.ProductsCsvPath); err != nil {
+			if errors.Is(err, locker.ErrLocked) {
+				l.Error("LockDir", errors.New("rawcsv dir locked"))
+				time.Sleep(waitdirlock_time)
+			} else {
+				l.Error("LockDir", err)
+				return
+			}
+		} else {
+			lckd = true
+			break
+		}
+	}
+	if !lckd {
+		l.Error("LockDir", errors.New("tries over, returning"))
+		return
+	}
+	needunlock = true
+	defer func() {
+		locker.UnlockDir(conf.ProductsCsvPath)
+		needunlock = false
+	}()
+
+	files, err := os.ReadDir(conf.ProductsCsvPath)
+	if err != nil {
+		l.Error("ReadDir", err)
+		return
+	}
+	if len(files) == 1 && files[0].Name() == locker.LockfileName {
+		l.Debug("ReadDir", "no files")
+		return
+	}
+
+	// CREATING ALTERNATIVE ARTICULES
+	altarts, err := loadAlternativeArticulesFromFile(conf.AlternativeArticulsFilePath)
+	if err != nil {
+		l.Error("loadAlternativeArticulesFromFile", err)
+		return
+	}
+
+	// CREATE UPLOAD
+	uploadid, err := rep.CreateUpload()
+	if err != nil {
+		l.Error("CreateUpload", err)
+		return
+	}
+
+	// FILES LOOP
+fileloop:
+	for _, f := range files {
+
+		l.Debug("Reading file", f.Name())
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".csv") {
+			l.Warning("Format/ReadDir", "noncsv file founded "+f.Name())
+			continue
+		}
+		file, err := os.Open(conf.ProductsCsvPath + f.Name())
+		if err != nil {
+			l.Error("os.Open", err)
+			return
+		}
+		//defer file.Close()
+
+		// GET SUPPLIER
+		r := csv.NewReader(file)
+		r.Comma = []rune(conf.SuppliersCsvFormat.Delimeter)[0]
+		r.LazyQuotes = true
+		r.ReuseRecord = true
+		_, err = r.Read()
+		if err != nil {
+			l.Error("csv.Reader.Read", err)
+			file.Close()
+			continue
+		}
+
+		sup, err := rep.GetSupplierByFilename(f.Name())
+		if err != nil {
+			l.Error("GetSupplierByFilename", errors.New(f.Name()+", err:"+err.Error()))
+			file.Close()
+			continue
+		}
+
+		var sucs, all int
+
+		// PRODUCTS LOOP
+		for {
+			row, err := r.Read()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if errors.Is(err, csv.ErrFieldCount) {
+					continue
+				}
+				l.Error("csv.Reader.Read", err)
+				file.Close()
+				continue fileloop
+			}
+			all++
+
+			// GET BRAND ID
+			normbrand := normstring(row[conf.SuppliersCsvFormat.BrandCol])
+			if normbrand == "" {
+				normbrand = "NO_BRAND"
+			}
+			brandid, err := rep.GetBrandIdByNorm(normstring(row[conf.SuppliersCsvFormat.BrandCol]))
+			if err != nil {
+				if errors.Is(err, ErrNotExists) {
+					l.Debug("GetBrandIdByNorm", "not found brand "+row[conf.SuppliersCsvFormat.BrandCol]+", creating one")
+					if brandid, err = rep.CreateBrand(strings.TrimSpace(row[conf.SuppliersCsvFormat.BrandCol]), []string{normstring(row[conf.SuppliersCsvFormat.BrandCol])}); err != nil {
+						l.Error("GetBrandIdByNorm/CreateBrand", err)
+						continue
+					}
+				} else {
+					l.Error("GetBrandIdByNorm", errors.New("brand normname:"+normstring(row[conf.SuppliersCsvFormat.BrandCol])+", err: "+err.Error()))
+					continue
+				}
+			}
+
+			// CREATING ARTICUL
+			normart := normstring(row[conf.SuppliersCsvFormat.ArticulCol])
+			var alts []string
+			if a, ok := altarts[normart]; ok {
+				normart, alts = a.primary, a.alt
+			}
+			if err = rep.UpsertArticul(normart, brandid, alts); err != nil {
+				l.Error("UpsertArticul", errors.New("normart: "+normart+", err"+err.Error()))
+				continue
+			}
+
+			// GET SHIT
+			price, err := strconv.ParseFloat(strings.Replace(row[conf.SuppliersCsvFormat.PriceCol], ",", ".", 1), 32)
+			if err != nil {
+				l.Error("ParseFloat/Price", errors.New("price:"+row[conf.SuppliersCsvFormat.PriceCol]+", product: "+row[conf.SuppliersCsvFormat.NameCol]+", err"+err.Error()))
+				continue
+			}
+			quantity, err := strconv.Atoi(row[conf.SuppliersCsvFormat.QuantityCol])
+			if err != nil {
+				l.Error("Atoi/Quantity", errors.New("quantity:"+row[conf.SuppliersCsvFormat.QuantityCol]+", product: "+row[conf.SuppliersCsvFormat.NameCol]+", err"+err.Error()))
+				continue
+			}
+			rest, err := strconv.Atoi(strings.Trim(row[conf.SuppliersCsvFormat.RestCol], "<>~"))
+			if err != nil {
+				l.Error("Atoi/Rest", errors.New("rest:"+row[conf.SuppliersCsvFormat.RestCol]+", product: "+row[conf.SuppliersCsvFormat.NameCol]+", err"+err.Error()))
+				continue
+			}
+
+			// CREATE PRODUCT
+
+			prodid, err := rep.GetOrCreateProduct(normart, sup.id, brandid, row[conf.SuppliersCsvFormat.NameCol], row[conf.SuppliersCsvFormat.PartnumCol], quantity)
+			if err != nil {
+				l.Error("GetOrCreateProduct", errors.New("product: "+row[conf.SuppliersCsvFormat.NameCol]+", err"+err.Error()))
+				continue
+			}
+			if err = rep.UpsertActualPrice(prodid, uploadid, float32(price), rest); err != nil {
+				l.Error("UpsertActualPrice", errors.New("product: "+row[conf.SuppliersCsvFormat.NameCol]+", err"+err.Error()))
+				continue
+			}
+			if err = rep.InsertHistoryPrice(prodid, uploadid, float32(price), rest); err != nil {
+				l.Error("InsertHistoryPrice", errors.New("product: "+row[conf.SuppliersCsvFormat.NameCol]+", err"+err.Error()))
+				continue
+			}
+			sucs++
+		}
+		l.Debug(sup.Name, "successfully added "+strconv.Itoa(sucs)+" of "+strconv.Itoa(all)+" from "+f.Name())
+		file.Close()
+	}
+}
+
+func createContextWithInterruptSignal(needunlock *bool, dirforunlock ...string) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-stop
+		cancel()
+		for _, n := range dirforunlock {
+			locker.UnlockDir(n)
+		}
+	}()
+	return ctx, cancel
 }

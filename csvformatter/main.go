@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/okonma-violet/confdecoder"
+	"github.com/okonma-violet/spec/locker"
 	"github.com/okonma-violet/spec/logs/encode"
 	"github.com/okonma-violet/spec/logs/logger"
 	"golang.org/x/text/encoding/charmap"
@@ -44,6 +45,11 @@ type format struct {
 	QuantityCol int
 	RestCol     int
 }
+
+const waitdirlock_time = time.Second * 5
+const maxwaittimes = 3
+
+var needunlock bool
 
 func main() {
 	conf := &config{}
@@ -83,43 +89,46 @@ func main() {
 	conf.RawCsvPath += "/"
 	conf.CsvPath += "/"
 
-	ctx, cancel := createContextWithInterruptSignal()
+	ctx, _ := createContextWithInterruptSignal(&needunlock, conf.CsvPath, conf.RawCsvPath)
 
 	flsh := logger.NewFlusher(encode.DebugLevel)
 	l := flsh.NewLogsContainer("csvformatter")
+	if *rp {
+		l.Info("Flag", "removing processed files enabled")
+	}
 
 	go func() {
-		//ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
+		l.Info("Routine", "loop started")
+		ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
 		l.Debug("Job", "started")
 		sups, err := loadSuppliersConfigsFromDir(l, conf.SuppliersConfsPath)
 		if err != nil {
 			l.Error("LoadSuppliers", err)
-			cancel()
 			return
 		}
 		sort.Sort(sups)
+		conf.do_job(l, *rp, sups)
+		l.Debug("Job", "done")
 
-		conf.do_job(l, cancel, *rp, sups)
-
-		cancel()
-		// for {
-		// 	select {
-		// 	case <-ctx.Done():
-		// 		l.Info("Routine", "context done, exiting loop")
-		// 		return
-		// 	case <-ticker.C:
-		// 		l.Debug("Job", "started")
-		// 		sups, err = rep.GetSuppliersByNames()
-		// 		if err != nil {
-		// 			l.Error("GetSuppliersByNames", err)
-		// 			l.Error("Job", errors.New("cant do without suppliers"))
-		// 		} else {
-		// 			conf.do_job(l, cancel, sups)
-		// 			l.Debug("Job", "done, sleeping")
-		// 		}
-		// 	}
-
-		// }
+		for {
+			select {
+			case <-ctx.Done():
+				l.Info("Routine", "context done, exiting loop")
+				return
+			case <-ticker.C:
+				l.Debug("Job", "started")
+				sups, err = loadSuppliersConfigsFromDir(l, conf.SuppliersConfsPath)
+				if err != nil {
+					l.Error("LoadSuppliers", err)
+					l.Error("Job", errors.New("cant do without suppliers"))
+					continue
+				} else {
+					sort.Sort(sups)
+					conf.do_job(l, *rp, sups)
+					l.Debug("Job", "done, sleeping")
+				}
+			}
+		}
 	}()
 
 	<-ctx.Done()
@@ -128,18 +137,74 @@ func main() {
 	flsh.DoneWithTimeout(time.Second * 5)
 }
 
-func (c *config) do_job(l logger.Logger, cancel context.CancelFunc, remove_processed bool, sups supplierslist) {
+func (c *config) do_job(l logger.Logger, remove_processed bool, sups supplierslist) {
 	l.Debug("Format", "started")
+	var sucs bool
+	for i := 0; i < maxwaittimes; i++ {
+		if err := locker.LockDir(c.RawCsvPath); err != nil {
+			if errors.Is(err, locker.ErrLocked) {
+				l.Error("LockDir", errors.New("rawcsv dir locked"))
+				time.Sleep(waitdirlock_time)
+			} else {
+				l.Error("LockDir", err)
+				return
+			}
+		} else {
+			sucs = true
+			break
+		}
+	}
+	if !sucs {
+		l.Error("LockDir", errors.New("tries over, returning"))
+		return
+	}
+	needunlock = true
+	sucs = false
+
+	for i := 0; i < maxwaittimes; i++ {
+		if err := locker.LockDir(c.CsvPath); err != nil {
+			if errors.Is(err, locker.ErrLocked) {
+				l.Error("LockDir", errors.New("csv dir locked"))
+				time.Sleep(waitdirlock_time)
+			} else {
+				l.Error("LockDir", err)
+				locker.UnlockDir(c.RawCsvPath)
+				needunlock = false
+				return
+			}
+		} else {
+			sucs = true
+			break
+		}
+	}
+	if !sucs {
+		l.Error("LockDir", errors.New("tries over, returning"))
+		locker.UnlockDir(c.RawCsvPath)
+		needunlock = false
+		return
+	}
+	defer func() {
+		locker.UnlockDir(c.CsvPath)
+		locker.UnlockDir(c.RawCsvPath)
+		needunlock = false
+	}()
+
 	files, err := os.ReadDir(c.RawCsvPath)
 	if err != nil {
 		l.Error("Format/ReadDir", err)
-		cancel()
+		return
+	}
+	if len(files) == 1 && files[0].Name() == locker.LockfileName {
+		l.Debug("ReadDir", "no files")
 		return
 	}
 loop:
 	for _, f := range files {
 		fname_lowered := strings.ToLower(f.Name())
 		if f.IsDir() || !strings.HasSuffix(fname_lowered, ".csv") {
+			if f.Name() == locker.LockfileName {
+				continue
+			}
 			l.Warning("Format/ReadDir", "noncsv file founded "+f.Name())
 			continue
 		}
@@ -352,7 +417,7 @@ func normart(s string) string {
 	return artrx.ReplaceAllString(strings.ToLower(s), "")
 }
 
-func createContextWithInterruptSignal() (context.Context, context.CancelFunc) {
+func createContextWithInterruptSignal(needunlock *bool, dirforunlock ...string) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -360,6 +425,9 @@ func createContextWithInterruptSignal() (context.Context, context.CancelFunc) {
 	go func() {
 		<-stop
 		cancel()
+		for _, n := range dirforunlock {
+			locker.UnlockDir(n)
+		}
 	}()
 	return ctx, cancel
 }

@@ -1,6 +1,6 @@
 ZipPath ../docs/test/zip/
 CsvPath ../docs/test/rawcsv/
-TimerSeconds 180
+TimerSeconds 300
 
 # SHITTY CHARSETS:
 ShittyCharsetZipNamesPrefixes {прайс армтек}

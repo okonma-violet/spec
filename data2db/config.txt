@@ -4,3 +4,5 @@ SuppliersConfsPath ../docs/suppliers/
 AlternativeArticulsFilePath ../docs/refs/alternative_articules.csv
 SuppliersCsvFormatFilePath ../docs/refs/csvformat.txt
 CategoriesFilePath ../docs/refs/categories.csv
+
+TimerSeconds 300

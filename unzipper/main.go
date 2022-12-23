@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/okonma-violet/confdecoder"
+	"github.com/okonma-violet/spec/locker"
 	"github.com/okonma-violet/spec/logs/encode"
 	"github.com/okonma-violet/spec/logs/logger"
 )
@@ -31,6 +32,8 @@ type shittycharsetzip struct {
 	charset string
 }
 
+const waitdirlock_time = time.Second * 5
+const maxwaittimes = 3
 const unzippath = "./unzipped/"
 
 func main() {
@@ -55,6 +58,7 @@ func main() {
 	conf.CsvPath += "/"
 
 	rp := flag.Bool("r", false, "remove processed zip and xls files")
+
 	flag.Parse()
 
 	shittycharsets := make([]shittycharsetzip, 0, len(conf.ShittyCharsetZipNamesPrefixes))
@@ -62,29 +66,33 @@ func main() {
 		shittycharsets = append(shittycharsets, shittycharsetzip{prefix: strings.ToLower(conf.ShittyCharsetZipNamesPrefixes[i]), charset: conf.ShittyCharsets[i]})
 	}
 
-	ctx, cancel := createContextWithInterruptSignal()
+	ctx, _ := createContextWithInterruptSignal()
 
 	flsh := logger.NewFlusher(encode.DebugLevel)
 	l := flsh.NewLogsContainer("unzipper")
+	if *rp {
+		l.Info("Flag", "removing processed files enabled")
+	}
 
 	go func() {
-		//ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
+		l.Info("Routine", "loop started")
+		ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
 		l.Debug("Job", "started")
-		do_job(l, cancel, *rp, conf, shittycharsets)
+		do_job(l, *rp, conf, shittycharsets)
 		l.Debug("Job", "done, sleeping")
-		cancel()
-		// for {
-		// 	select {
-		// 	case <-ctx.Done():
-		// 		l.Info("Routine", "context done, exiting loop")
-		// 		return
-		// 	case <-ticker.C:
-		// 		l.Debug("Job", "started")
-		// 		do_job(l, cancel, conf)
-		// 		l.Debug("Job", "done, sleeping")
-		// 	}
 
-		// }
+		for {
+			select {
+			case <-ctx.Done():
+				l.Info("Routine", "context done, exiting loop")
+				return
+			case <-ticker.C:
+				l.Debug("Job", "started")
+				do_job(l, *rp, conf, shittycharsets)
+				l.Debug("Job", "done, sleeping")
+			}
+
+		}
 	}()
 
 	<-ctx.Done()
@@ -93,12 +101,54 @@ func main() {
 	flsh.DoneWithTimeout(time.Second * 5)
 }
 
-func do_job(l logger.Logger, cancel context.CancelFunc, remove_processed bool, conf *config, shittyzips []shittycharsetzip) {
+func do_job(l logger.Logger, remove_processed bool, conf *config, shittyzips []shittycharsetzip) {
 	l.Debug("ZipDir_Loop", "started")
+
+	var sucs bool
+	for i := 0; i < maxwaittimes; i++ {
+		if err := locker.LockDir(conf.ZipPath); err != nil {
+			if errors.Is(err, locker.ErrLocked) {
+				l.Error("LockDir", errors.New("zip dir locked"))
+				time.Sleep(waitdirlock_time)
+			} else {
+				l.Error("LockDir", err)
+				return
+			}
+		} else {
+			sucs = true
+			break
+		}
+	}
+	if !sucs {
+		l.Error("LockDir", errors.New("tries over, returning"))
+		return
+	}
+	defer locker.UnlockDir(conf.ZipPath)
+	sucs = false
+
+	for i := 0; i < maxwaittimes; i++ {
+		if err := locker.LockDir(conf.CsvPath); err != nil {
+			if errors.Is(err, locker.ErrLocked) {
+				l.Error("LockDir", errors.New("csv dir locked"))
+				time.Sleep(waitdirlock_time)
+			} else {
+				l.Error("LockDir", err)
+				return
+			}
+		} else {
+			sucs = true
+			break
+		}
+	}
+	if !sucs {
+		l.Error("LockDir", errors.New("tries over, returning"))
+		return
+	}
+	defer locker.UnlockDir(conf.CsvPath)
+
 	files, err := os.ReadDir(conf.ZipPath)
 	if err != nil {
 		l.Error("ZipDir_Loop/ReadDir", err)
-		cancel()
 		return
 	}
 
@@ -144,6 +194,9 @@ func do_job(l logger.Logger, cancel context.CancelFunc, remove_processed bool, c
 			l.Debug("MoveCsv", "moved "+f.Name())
 			continue
 		}
+		if f.Name() == locker.LockfileName {
+			continue
+		}
 		l.Warning("ZipDir_Loop", "nondir/nonzip/noncsv/nonxls file found: "+f.Name())
 		continue
 	remove:
@@ -160,7 +213,6 @@ func do_job(l logger.Logger, cancel context.CancelFunc, remove_processed bool, c
 	files, err = os.ReadDir(unzippath)
 	if err != nil {
 		l.Error("UnzippedDir_Loop/ReadDir", err)
-		cancel()
 		return
 	}
 	for _, f := range files {
@@ -186,6 +238,9 @@ func do_job(l logger.Logger, cancel context.CancelFunc, remove_processed bool, c
 			l.Debug("MoveCsv", "moved "+f.Name())
 			continue
 		}
+		if f.Name() == locker.LockfileName {
+			continue
+		}
 		l.Warning("UnzippedDir_Loop", "nondir/noncsv/nonxls file found: "+f.Name())
 		continue
 	remove2:
@@ -202,7 +257,6 @@ func do_job(l logger.Logger, cancel context.CancelFunc, remove_processed bool, c
 	files, err = os.ReadDir(".")
 	if err != nil {
 		l.Error("ConvertedToCsvDir_Loop/ReadDir", err)
-		cancel()
 		return
 	}
 	for _, f := range files {

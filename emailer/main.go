@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/okonma-violet/confdecoder"
+	"github.com/okonma-violet/spec/locker"
 	"github.com/okonma-violet/spec/logs/encode"
 	"github.com/okonma-violet/spec/logs/logger"
 )
@@ -21,6 +21,9 @@ type config struct {
 
 	SuppliersConfsPath string
 }
+
+const waitdirlock_time = time.Second * 5
+const maxwaittimes = 3
 
 func main() {
 	conf := &config{}
@@ -41,54 +44,81 @@ func main() {
 	conf.SuppliersConfsPath += "/"
 	conf.DownloadsPath += "/"
 
-	ctx, cancel := createContextWithInterruptSignal()
+	locked := false
+	ctx, _ := createContextWithInterruptSignal(&locked, conf.DownloadsPath)
 
 	flsh := logger.NewFlusher(encode.DebugLevel)
 	l := flsh.NewLogsContainer("emailer")
 
 	go func() {
-		//ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
+		l.Info("Routine", "loop started")
+		ticker := time.NewTicker(time.Second * time.Duration(conf.TimerSeconds))
 		l.Debug("Job", "started")
 		sups, err := loadSuppliersConfigsFromDir(l, conf.SuppliersConfsPath)
-		for i, s := range sups {
-			fmt.Println(i)
-			fmt.Println(s)
-		}
 		if err != nil {
 			l.Error("LoadSuppliers", err)
-			cancel()
 			return
 		}
-
-		if err = checkMail(l, conf.DownloadsPath, sups); err != nil {
-			l.Error("checkMail", err)
+		if lockdir(l, conf.DownloadsPath) {
+			if err = checkMail(l, conf.DownloadsPath, sups); err != nil {
+				l.Error("checkMail", err)
+			}
+			locker.UnlockDir(conf.DownloadsPath)
 		}
 
-		cancel()
-		// for {
-		// 	select {
-		// 	case <-ctx.Done():
-		// 		l.Info("Routine", "context done, exiting loop")
-		// 		return
-		// 	case <-ticker.C:
-		// 		l.Debug("Job", "started")
-		// 		sups, err = rep.GetSuppliersByNames()
-		// 		if err != nil {
-		// 			l.Error("GetSuppliersByNames", err)
-		// 			l.Error("Job", errors.New("cant do without suppliers"))
-		// 		} else {
-		// 			conf.do_job(l, cancel, sups)
-		// 			l.Debug("Job", "done, sleeping")
-		// 		}
-		// 	}
+		for {
+			select {
+			case <-ctx.Done():
+				l.Info("Routine", "context done, exiting loop")
+				return
+			case <-ticker.C:
+				l.Debug("Job", "started")
+				sups, err = loadSuppliersConfigsFromDir(l, conf.SuppliersConfsPath)
+				if err != nil {
+					l.Error("LoadSuppliers", err)
+					l.Error("Job", errors.New("cant do without suppliers"))
+					continue
+				} else {
+					if lockdir(l, conf.DownloadsPath) {
+						locked = true
+						if err = checkMail(l, conf.DownloadsPath, sups); err != nil {
+							l.Error("checkMail", err)
+						}
+						locker.UnlockDir(conf.DownloadsPath)
+						locked = false
+					}
+					l.Debug("Job", "done, sleeping")
+				}
+			}
 
-		// }
+		}
 	}()
 
 	<-ctx.Done()
 	l.Debug("Context", "done, exiting")
 	flsh.Close()
 	flsh.DoneWithTimeout(time.Second * 5)
+}
+
+func lockdir(l logger.Logger, path string) (lckd bool) {
+	for i := 0; i < maxwaittimes; i++ {
+		if err := locker.LockDir(path); err != nil {
+			if errors.Is(err, locker.ErrLocked) {
+				l.Error("LockDir", errors.New("download dir locked"))
+				time.Sleep(waitdirlock_time)
+			} else {
+				l.Error("LockDir", err)
+				return
+			}
+		} else {
+			lckd = true
+			break
+		}
+	}
+	if !lckd {
+		l.Error("LockDir", errors.New("tries over, returning"))
+	}
+	return
 }
 
 type supplier struct {
@@ -144,7 +174,7 @@ func loadSuppliersConfigsFromDir(l logger.Logger, path string) ([]supplier, erro
 	}
 	return sups, nil
 }
-func createContextWithInterruptSignal() (context.Context, context.CancelFunc) {
+func createContextWithInterruptSignal(needunlock *bool, dirforunlock ...string) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -152,6 +182,9 @@ func createContextWithInterruptSignal() (context.Context, context.CancelFunc) {
 	go func() {
 		<-stop
 		cancel()
+		for _, n := range dirforunlock {
+			locker.UnlockDir(n)
+		}
 	}()
 	return ctx, cancel
 }
