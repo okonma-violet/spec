@@ -304,11 +304,12 @@ fileloop:
 			if normbrand == "" {
 				normbrand = "NO_BRAND"
 			}
-			brandid, err := rep.GetBrandIdByNorm(normstring(row[conf.SuppliersCsvFormat.BrandCol]))
+			brandid, brandnorms, err := rep.GetBrandIdByNorm(normstring(row[conf.SuppliersCsvFormat.BrandCol]))
 			if err != nil {
 				if errors.Is(err, ErrNotExists) {
 					l.Debug("GetBrandIdByNorm", "not found brand "+row[conf.SuppliersCsvFormat.BrandCol]+", creating one")
-					if brandid, err = rep.CreateBrand(strings.TrimSpace(row[conf.SuppliersCsvFormat.BrandCol]), []string{normstring(row[conf.SuppliersCsvFormat.BrandCol])}); err != nil {
+					brandnorms = []string{normstring(row[conf.SuppliersCsvFormat.BrandCol])}
+					if brandid, err = rep.CreateBrand(strings.TrimSpace(row[conf.SuppliersCsvFormat.BrandCol]), brandnorms); err != nil {
 						l.Error("GetBrandIdByNorm/CreateBrand", err)
 						continue
 					}
@@ -320,10 +321,16 @@ fileloop:
 
 			// CREATING ARTICUL
 			normart := normstring(row[conf.SuppliersCsvFormat.ArticulCol])
-			var alts []string
-			if a, ok := altarts[normart]; ok {
-				normart, alts = a.primary, a.alt
+			alts := make([]string, 0)
+			for i := 0; i < len(brandnorms); i++ {
+				if artmap, ok := altarts[brandnorms[i]]; ok {
+					if a, ok := artmap[normart]; ok {
+						normart, alts = a.primary, a.alt
+					}
+					break
+				}
 			}
+
 			if err = rep.UpsertArticul(normart, brandid, alts); err != nil {
 				l.Error("UpsertArticul", errors.New("normart: "+normart+", err"+err.Error()))
 				continue
@@ -371,6 +378,14 @@ fileloop:
 				l.Error("Remove", err)
 			}
 			l.Debug("Remove", "file removed: "+f.Name())
+		}
+
+		// UPDATE OUT OF STOCK PRODUCTS
+		n, err := rep.UpdateOutOfStock(sup.id, uploadid)
+		if err != nil {
+			l.Error("UpdateOutOfStock", err)
+		} else {
+			l.Debug("UpdateOutOfStock", "rest set to zero for "+strconv.Itoa(n)+" products, supplier: "+sup.Name)
 		}
 	}
 }

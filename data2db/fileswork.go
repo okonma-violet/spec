@@ -171,7 +171,7 @@ type altarticul struct {
 	alt     []string
 }
 
-func loadAlternativeArticulesFromFile(filepath string) (map[string]*altarticul, error) {
+func loadAlternativeArticulesFromFile(filepath string) (map[string]map[string]*altarticul, error) {
 	file, err := os.Open(filepath)
 	if err != nil {
 		return nil, err
@@ -181,12 +181,11 @@ func loadAlternativeArticulesFromFile(filepath string) (map[string]*altarticul, 
 	r := csv.NewReader(file)
 	r.ReuseRecord = true
 	r.Comma = []rune(";")[0]
-	r.FieldsPerRecord = 2
+	r.FieldsPerRecord = 3
 	if _, err = r.Read(); err != nil { // skip head
 		return nil, err
 	}
-
-	alternative_articules := make(map[string]*altarticul)
+	alternative_articules := make(map[string]map[string]*altarticul)
 loop:
 	for {
 		row, err := r.Read()
@@ -198,16 +197,24 @@ loop:
 		}
 		normprimary := normstring(row[0])
 		normalt := normstring(row[1])
-		if _, ok := alternative_articules[normprimary]; ok {
-			if _, altok := alternative_articules[normalt]; altok {
-				continue loop
+		normbrand := normstring(row[2])
+		if artmap, ok := alternative_articules[normbrand]; ok {
+			if _, ok := artmap[normprimary]; ok {
+				if _, altok := artmap[normalt]; altok {
+					continue loop
+				}
+				artmap[normprimary].alt = append(artmap[normprimary].alt, normalt)
+				artmap[normalt] = artmap[normprimary]
+			} else {
+				aa := &altarticul{primary: normprimary, alt: []string{normalt}}
+				artmap[normprimary] = aa
+				artmap[normalt] = aa
 			}
-			alternative_articules[normprimary].alt = append(alternative_articules[normprimary].alt, normalt)
-			alternative_articules[normalt] = alternative_articules[normprimary]
 		} else {
+			alternative_articules[normbrand] = make(map[string]*altarticul)
 			aa := &altarticul{primary: normprimary, alt: []string{normalt}}
-			alternative_articules[normprimary] = aa
-			alternative_articules[normalt] = aa
+			alternative_articules[normbrand][normprimary] = aa
+			alternative_articules[normbrand][normalt] = aa
 		}
 
 	}

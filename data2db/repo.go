@@ -227,6 +227,15 @@ func (r *repo) UpsertActualPrice(productid, uploadid int, price float32, rest in
 	return err
 }
 
+func (r *repo) UpdateOutOfStock(supplierid, uploadid int) (int, error) {
+	ct, err := r.db.Exec(context.Background(), `UPDATE prices_actual
+	SET rest=0,uploadid=$2
+	FROM (SELECT id FROM products WHERE supplierid=$1) AS subq
+	WHERE prices_actual.productid=subq.id
+	AND uploadid<$2`, supplierid, uploadid)
+	return int(ct.RowsAffected()), err
+}
+
 func (r *repo) InsertHistoryPrice(productid, uploadid int, price float32, rest int) error {
 	_, err := r.db.Exec(context.Background(), `INSERT INTO prices_history(productid,uploadid,price,rest)
 	values($1,$2,$3,$4)`, productid, uploadid, price, rest)
@@ -259,7 +268,7 @@ func (r *repo) UpdateArticulCategory(articul string, brandid, categoryid int) er
 	if err != nil {
 		return err
 	}
-	if ct.String() == "UPDATE 0" {
+	if ct.RowsAffected() == 0 {
 		return ErrNotExists
 	}
 	return nil
@@ -317,15 +326,16 @@ func (r *repo) CreateBrand(name string, norm []string) (int, error) {
 	return id, nil
 }
 
-func (r *repo) GetBrandIdByNorm(norm string) (int, error) {
+func (r *repo) GetBrandIdByNorm(norm string) (int, []string, error) {
 	var id int
-	if err := r.db.QueryRow(context.Background(), "SELECT id FROM brands WHERE $1 = ANY (norm)", norm).Scan(&id); err != nil { //norm@>ARRAY[$1]
+	var norms []string
+	if err := r.db.QueryRow(context.Background(), "SELECT id,norm FROM brands WHERE $1 = ANY (norm)", norm).Scan(&id, &norms); err != nil { //norm@>ARRAY[$1]
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrNotExists
+			return 0, nil, ErrNotExists
 		}
-		return 0, err
+		return 0, nil, err
 	}
-	return id, nil
+	return id, norms, nil
 }
 
 type supplier struct {
